@@ -20,7 +20,9 @@ import {
   Edit2,
   X,
   Tag,
-  Zap,
+  BarChart3,
+  Code2,
+  CheckCircle,
 } from "lucide-react";
 
 interface ContestItem {
@@ -31,6 +33,17 @@ interface ContestItem {
   rank: number;
   color: string;
   delta: number;
+}
+
+interface SolvedBreakdown {
+  easy: number;
+  easyTotal: number;
+  medium: number;
+  mediumTotal: number;
+  hard: number;
+  hardTotal: number;
+  total: number;
+  allTotal: number;
 }
 
 interface UserProfile {
@@ -46,6 +59,7 @@ interface UserProfile {
   userType: string | null;
   institution: string | null;
   problemsSolved: number;
+  solvedBreakdown?: SolvedBreakdown;
 }
 
 interface UserStats {
@@ -74,6 +88,7 @@ export interface SavedProfile {
   rating?: number;
   streak?: number;
   stars?: string;
+  problemsSolved?: number;
 }
 
 interface MultiMatch {
@@ -91,11 +106,15 @@ export default function Home() {
 
   // Multi-platform match state when username exists on both
   const [multiMatch, setMultiMatch] = useState<MultiMatch | null>(null);
-  const [activePlatformTab, setActivePlatformTab] = useState<"codechef" | "leetcode">("codechef");
+  const [activeView, setActiveView] = useState<"codechef" | "leetcode" | "compare">("codechef");
 
   // Saved Profiles (Local Storage)
   const [savedProfiles, setSavedProfiles] = useState<SavedProfile[]>([]);
-  const [editingProfile, setEditingProfile] = useState<{ username: string; platform: "codechef" | "leetcode"; currentName: string } | null>(null);
+  const [editingProfile, setEditingProfile] = useState<{
+    username: string;
+    platform: "codechef" | "leetcode";
+    currentName: string;
+  } | null>(null);
   const [renameValue, setRenameValue] = useState("");
 
   // Load saved profiles from localStorage on mount
@@ -124,7 +143,11 @@ export default function Home() {
   };
 
   // Add or update profile in saved list upon successful fetch
-  const handleSaveSuccessfulProfile = (userProfile: UserProfile, stats: UserStats, platform: "codechef" | "leetcode") => {
+  const handleSaveSuccessfulProfile = (
+    userProfile: UserProfile,
+    stats: UserStats,
+    platform: "codechef" | "leetcode"
+  ) => {
     setSavedProfiles((prev) => {
       const uname = userProfile.username.toLowerCase();
       const existingIdx = prev.findIndex(
@@ -139,6 +162,7 @@ export default function Home() {
           rating: userProfile.currentRating,
           streak: stats.currentContestStreak,
           stars: userProfile.stars,
+          problemsSolved: userProfile.problemsSolved,
         };
         updated = [updatedItem, ...prev.filter((_, i) => i !== existingIdx)];
       } else {
@@ -154,6 +178,7 @@ export default function Home() {
           rating: userProfile.currentRating,
           streak: stats.currentContestStreak,
           stars: userProfile.stars,
+          problemsSolved: userProfile.problemsSolved,
         };
         updated = [newItem, ...prev].slice(0, 25);
       }
@@ -179,7 +204,7 @@ export default function Home() {
         throw new Error(json.error || `Failed to fetch ${platform} data.`);
       }
       setData(json);
-      setActivePlatformTab(platform);
+      setActiveView(platform);
       handleSaveSuccessfulProfile(json.profile, json.stats, platform);
     } catch (err: any) {
       setError(err.message || "An error occurred.");
@@ -205,7 +230,7 @@ export default function Home() {
       return;
     }
 
-    // Input is a username: check BOTH platforms simultaneously
+    // Input is a plain username: check BOTH platforms simultaneously
     setLoading(true);
     setError(null);
     setMultiMatch(null);
@@ -220,31 +245,31 @@ export default function Home() {
       const lcData: ApiResponse | null = lcRes.status === "fulfilled" ? lcRes.value : null;
 
       if (ccData && lcData) {
-        // Exists on BOTH platforms! Let user choose or toggle
+        // Exists on BOTH platforms! Set multiMatch
         setMultiMatch({
           username: trimmed,
           codechef: ccData,
           leetcode: lcData,
         });
-        // Default to CodeChef first, but tabs are active
+        // Default to comparison or LeetCode if LC has more, else CodeChef
         setData(ccData);
-        setActivePlatformTab("codechef");
+        setActiveView("compare");
         handleSaveSuccessfulProfile(ccData.profile, ccData.stats, "codechef");
         handleSaveSuccessfulProfile(lcData.profile, lcData.stats, "leetcode");
       } else if (ccData && !lcData) {
         // Exists ONLY on CodeChef
         setData(ccData);
-        setActivePlatformTab("codechef");
+        setActiveView("codechef");
         handleSaveSuccessfulProfile(ccData.profile, ccData.stats, "codechef");
       } else if (!ccData && lcData) {
         // Exists ONLY on LeetCode
         setData(lcData);
-        setActivePlatformTab("leetcode");
+        setActiveView("leetcode");
         handleSaveSuccessfulProfile(lcData.profile, lcData.stats, "leetcode");
       } else {
         // Exists on NEITHER
         setData(null);
-        setError(`User '${trimmed}' not found on CodeChef or LeetCode.`);
+        setError(`User '${trimmed}' was not found on CodeChef or LeetCode.`);
       }
     } catch (err: any) {
       setError(err.message || "An error occurred during lookup.");
@@ -267,9 +292,9 @@ export default function Home() {
     const displayName = currentSaved?.customName || data.profile.name;
 
     const text = `${data.platform === "leetcode" ? "LeetCode" : "CodeChef"} Stats for ${displayName} (@${data.profile.username}):\n` +
+      `Problems Solved: ${data.profile.problemsSolved}\n` +
       `Contests: ${data.stats.totalContests}\n` +
       `Current Streak: ${data.stats.currentContestStreak}\n` +
-      `Max Streak: ${data.stats.maxContestStreak}\n` +
       `Rating: ${data.profile.currentRating} (${data.profile.stars}) | Peak: ${data.profile.maxRating}`;
     navigator.clipboard.writeText(text);
     setCopied(true);
@@ -334,7 +359,7 @@ export default function Home() {
           <span className="text-amber-400">Streak Tracker</span>
         </h1>
         <p className="text-zinc-400 text-xs sm:text-sm mt-1">
-          CodeChef &amp; LeetCode contest streaks, ratings, and stats
+          CodeChef &amp; LeetCode contest streaks, problems solved, and stats
         </p>
       </div>
 
@@ -392,9 +417,13 @@ export default function Home() {
                       : "bg-zinc-900 hover:bg-zinc-800 border-zinc-800 text-zinc-300"
                   }`}
                 >
-                  <span className={`text-[10px] font-bold px-1 rounded ${
-                    p.platform === "leetcode" ? "bg-amber-500/20 text-amber-400" : "bg-orange-500/20 text-orange-400"
-                  }`}>
+                  <span
+                    className={`text-[10px] font-bold px-1 rounded ${
+                      p.platform === "leetcode"
+                        ? "bg-amber-500/20 text-amber-400"
+                        : "bg-orange-500/20 text-orange-400"
+                    }`}
+                  >
                     {p.platform === "leetcode" ? "LC" : "CC"}
                   </span>
                   <span className="font-medium text-xs text-white">{p.customName}</span>
@@ -408,10 +437,14 @@ export default function Home() {
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
-                      setEditingProfile({ username: p.username, platform: p.platform, currentName: p.customName });
+                      setEditingProfile({
+                        username: p.username,
+                        platform: p.platform,
+                        currentName: p.customName,
+                      });
                       setRenameValue(p.customName);
                     }}
-                    title="Rename / Set Custom Name"
+                    title="Rename"
                     className="opacity-50 hover:opacity-100 text-zinc-400 hover:text-amber-400 p-0.5 rounded transition-opacity"
                   >
                     <Edit2 className="w-3 h-3" />
@@ -419,7 +452,7 @@ export default function Home() {
                   <button
                     type="button"
                     onClick={(e) => handleDeleteSaved(p.username, p.platform, e)}
-                    title="Remove from saved"
+                    title="Remove"
                     className="opacity-50 hover:opacity-100 text-zinc-400 hover:text-red-400 p-0.5 rounded transition-opacity"
                   >
                     <X className="w-3 h-3" />
@@ -431,40 +464,53 @@ export default function Home() {
         )}
       </div>
 
-      {/* Multi-Match Platform Selector */}
+      {/* Multi-Match Platform View Switcher */}
       {multiMatch && (
-        <div className="max-w-xl mx-auto my-4 p-3 rounded-xl bg-zinc-900/90 border border-amber-500/30 flex flex-col sm:flex-row items-center justify-between gap-3">
-          <div className="text-xs text-zinc-300 text-center sm:text-left">
+        <div className="max-w-xl mx-auto my-4 p-3 rounded-xl bg-zinc-900 border border-zinc-800 flex flex-col sm:flex-row items-center justify-between gap-3">
+          <div className="text-xs text-zinc-400 text-center sm:text-left">
             <span>Found </span>
-            <strong className="text-amber-400">@{multiMatch.username}</strong>
-            <span> on both platforms. Choose one to view:</span>
+            <strong className="text-white">@{multiMatch.username}</strong>
+            <span> on both platforms:</span>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 bg-zinc-950 p-1 rounded-lg border border-zinc-800">
             <button
               onClick={() => {
-                setActivePlatformTab("codechef");
-                setData(multiMatch.codechef || null);
+                setActiveView("compare");
               }}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${
-                activePlatformTab === "codechef"
-                  ? "bg-gradient-to-r from-orange-500 to-amber-500 text-zinc-950 font-bold shadow-md"
-                  : "bg-zinc-800 text-zinc-300 hover:text-white"
+              className={`px-3 py-1 rounded-md text-xs font-semibold transition-all flex items-center gap-1 ${
+                activeView === "compare"
+                  ? "bg-amber-500 text-zinc-950 font-bold shadow-sm"
+                  : "text-zinc-400 hover:text-white"
               }`}
             >
-              <span>🧑‍🍳 CodeChef</span>
+              <BarChart3 className="w-3.5 h-3.5" />
+              <span>Compare</span>
             </button>
             <button
               onClick={() => {
-                setActivePlatformTab("leetcode");
-                setData(multiMatch.leetcode || null);
+                setActiveView("codechef");
+                setData(multiMatch.codechef || null);
               }}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${
-                activePlatformTab === "leetcode"
-                  ? "bg-gradient-to-r from-amber-400 to-yellow-500 text-zinc-950 font-bold shadow-md"
-                  : "bg-zinc-800 text-zinc-300 hover:text-white"
+              className={`px-3 py-1 rounded-md text-xs font-semibold transition-all flex items-center gap-1 ${
+                activeView === "codechef"
+                  ? "bg-amber-500 text-zinc-950 font-bold shadow-sm"
+                  : "text-zinc-400 hover:text-white"
               }`}
             >
-              <span>⚡ LeetCode</span>
+              <span>CodeChef</span>
+            </button>
+            <button
+              onClick={() => {
+                setActiveView("leetcode");
+                setData(multiMatch.leetcode || null);
+              }}
+              className={`px-3 py-1 rounded-md text-xs font-semibold transition-all flex items-center gap-1 ${
+                activeView === "leetcode"
+                  ? "bg-amber-500 text-zinc-950 font-bold shadow-sm"
+                  : "text-zinc-400 hover:text-white"
+              }`}
+            >
+              <span>LeetCode</span>
             </button>
           </div>
         </div>
@@ -539,18 +585,157 @@ export default function Home() {
         </div>
       )}
 
-      {/* Main Results Display */}
-      {!loading && data && (
+      {/* COMPARISON VIEW: CODECHEF VS LEETCODE GRAPH & BARS */}
+      {!loading && multiMatch && activeView === "compare" && multiMatch.codechef && multiMatch.leetcode && (
+        <div className="space-y-5 mt-6">
+          {/* Comparison Card Header */}
+          <div className="rounded-2xl bg-zinc-900 border border-zinc-800 p-5 shadow-lg">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-zinc-800">
+              <div>
+                <h2 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
+                  <BarChart3 className="w-5 h-5 text-amber-400" />
+                  <span>Platform Comparison</span>
+                </h2>
+                <p className="text-xs text-zinc-400 mt-0.5">
+                  Side-by-side stats for <strong className="text-white">@{multiMatch.username}</strong>
+                </p>
+              </div>
+              <div className="flex items-center gap-3 text-xs">
+                <span className="flex items-center gap-1.5 font-medium text-orange-400">
+                  <span className="w-2.5 h-2.5 rounded-full bg-orange-500"></span>
+                  CodeChef
+                </span>
+                <span className="flex items-center gap-1.5 font-medium text-amber-400">
+                  <span className="w-2.5 h-2.5 rounded-full bg-amber-400"></span>
+                  LeetCode
+                </span>
+              </div>
+            </div>
+
+            {/* Comparison Metrics Bars */}
+            <div className="space-y-5 pt-4">
+              {/* Metric 1: Problems Solved */}
+              <div>
+                <div className="flex items-center justify-between text-xs mb-1.5">
+                  <span className="text-zinc-400 font-medium">Problems Solved</span>
+                  <div className="flex items-center gap-4 text-xs font-bold">
+                    <span className="text-orange-400">CC: {multiMatch.codechef.profile.problemsSolved}</span>
+                    <span className="text-amber-400">LC: {multiMatch.leetcode.profile.problemsSolved}</span>
+                  </div>
+                </div>
+                <div className="w-full h-3 rounded-full bg-zinc-800 overflow-hidden flex">
+                  {(() => {
+                    const cc = multiMatch.codechef.profile.problemsSolved;
+                    const lc = multiMatch.leetcode.profile.problemsSolved;
+                    const total = Math.max(cc + lc, 1);
+                    const ccPct = Math.round((cc / total) * 100);
+                    const lcPct = 100 - ccPct;
+                    return (
+                      <>
+                        <div style={{ width: `${ccPct}%` }} className="bg-orange-500 h-full transition-all"></div>
+                        <div style={{ width: `${lcPct}%` }} className="bg-amber-400 h-full transition-all"></div>
+                      </>
+                    );
+                  })()}
+                </div>
+              </div>
+
+              {/* Metric 2: Contests Participated */}
+              <div>
+                <div className="flex items-center justify-between text-xs mb-1.5">
+                  <span className="text-zinc-400 font-medium">Contests Given</span>
+                  <div className="flex items-center gap-4 text-xs font-bold">
+                    <span className="text-orange-400">CC: {multiMatch.codechef.stats.totalContests}</span>
+                    <span className="text-amber-400">LC: {multiMatch.leetcode.stats.totalContests}</span>
+                  </div>
+                </div>
+                <div className="w-full h-3 rounded-full bg-zinc-800 overflow-hidden flex">
+                  {(() => {
+                    const cc = multiMatch.codechef.stats.totalContests;
+                    const lc = multiMatch.leetcode.stats.totalContests;
+                    const total = Math.max(cc + lc, 1);
+                    const ccPct = Math.round((cc / total) * 100);
+                    const lcPct = 100 - ccPct;
+                    return (
+                      <>
+                        <div style={{ width: `${ccPct}%` }} className="bg-orange-500 h-full transition-all"></div>
+                        <div style={{ width: `${lcPct}%` }} className="bg-amber-400 h-full transition-all"></div>
+                      </>
+                    );
+                  })()}
+                </div>
+              </div>
+
+              {/* Metric 3: Current Rating */}
+              <div>
+                <div className="flex items-center justify-between text-xs mb-1.5">
+                  <span className="text-zinc-400 font-medium">Contest Rating</span>
+                  <div className="flex items-center gap-4 text-xs font-bold">
+                    <span className="text-orange-400">CC: {multiMatch.codechef.profile.currentRating}</span>
+                    <span className="text-amber-400">LC: {multiMatch.leetcode.profile.currentRating}</span>
+                  </div>
+                </div>
+                <div className="w-full h-3 rounded-full bg-zinc-800 overflow-hidden flex">
+                  {(() => {
+                    const cc = multiMatch.codechef.profile.currentRating;
+                    const lc = multiMatch.leetcode.profile.currentRating;
+                    const total = Math.max(cc + lc, 1);
+                    const ccPct = Math.round((cc / total) * 100);
+                    const lcPct = 100 - ccPct;
+                    return (
+                      <>
+                        <div style={{ width: `${ccPct}%` }} className="bg-orange-500 h-full transition-all"></div>
+                        <div style={{ width: `${lcPct}%` }} className="bg-amber-400 h-full transition-all"></div>
+                      </>
+                    );
+                  })()}
+                </div>
+              </div>
+
+              {/* Metric 4: Max Streak */}
+              <div>
+                <div className="flex items-center justify-between text-xs mb-1.5">
+                  <span className="text-zinc-400 font-medium">Max Contest Streak</span>
+                  <div className="flex items-center gap-4 text-xs font-bold">
+                    <span className="text-orange-400">CC: {multiMatch.codechef.stats.maxContestStreak} contests</span>
+                    <span className="text-amber-400">LC: {multiMatch.leetcode.stats.maxContestStreak} contests</span>
+                  </div>
+                </div>
+                <div className="w-full h-3 rounded-full bg-zinc-800 overflow-hidden flex">
+                  {(() => {
+                    const cc = multiMatch.codechef.stats.maxContestStreak;
+                    const lc = multiMatch.leetcode.stats.maxContestStreak;
+                    const total = Math.max(cc + lc, 1);
+                    const ccPct = Math.round((cc / total) * 100);
+                    const lcPct = 100 - ccPct;
+                    return (
+                      <>
+                        <div style={{ width: `${ccPct}%` }} className="bg-orange-500 h-full transition-all"></div>
+                        <div style={{ width: `${lcPct}%` }} className="bg-amber-400 h-full transition-all"></div>
+                      </>
+                    );
+                  })()}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SINGLE PLATFORM DETAILS VIEW */}
+      {!loading && data && activeView !== "compare" && (
         <div className="space-y-4 sm:space-y-6 mt-6">
           {/* User Profile Card */}
-          <div className="rounded-2xl bg-zinc-900/90 border border-zinc-800 p-4 sm:p-6 shadow-lg">
+          <div className="rounded-2xl bg-zinc-900 border border-zinc-800 p-4 sm:p-6 shadow-lg">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div className="flex items-center gap-3">
-                <div className={`w-12 h-12 rounded-xl flex items-center justify-center font-bold text-lg shrink-0 border ${
-                  data.platform === "leetcode"
-                    ? "bg-amber-500/20 text-amber-400 border-amber-500/30"
-                    : "bg-orange-500/20 text-orange-400 border-orange-500/30"
-                }`}>
+                <div
+                  className={`w-12 h-12 rounded-xl flex items-center justify-center font-bold text-lg shrink-0 border ${
+                    data.platform === "leetcode"
+                      ? "bg-amber-500/20 text-amber-400 border-amber-500/30"
+                      : "bg-orange-500/20 text-orange-400 border-orange-500/30"
+                  }`}
+                >
                   {(currentSavedProfile?.customName || data.profile.name).charAt(0).toUpperCase()}
                 </div>
                 <div className="min-w-0">
@@ -558,11 +743,13 @@ export default function Home() {
                     <h2 className="text-base sm:text-lg font-bold text-white truncate">
                       {currentSavedProfile?.customName || data.profile.name}
                     </h2>
-                    <span className={`text-[10px] uppercase font-bold px-1.5 py-0.5 rounded border ${
-                      data.platform === "leetcode"
-                        ? "bg-amber-500/10 text-amber-400 border-amber-500/30"
-                        : "bg-orange-500/10 text-orange-400 border-orange-500/30"
-                    }`}>
+                    <span
+                      className={`text-[10px] uppercase font-bold px-1.5 py-0.5 rounded border ${
+                        data.platform === "leetcode"
+                          ? "bg-amber-500/10 text-amber-400 border-amber-500/30"
+                          : "bg-orange-500/10 text-orange-400 border-orange-500/30"
+                      }`}
+                    >
                       {data.platform === "leetcode" ? "LeetCode" : "CodeChef"}
                     </span>
                     <button
@@ -637,6 +824,105 @@ export default function Home() {
             </div>
           </div>
 
+          {/* LEETCODE PROBLEM SOLVING BREAKDOWN (EASY, MEDIUM, HARD) */}
+          {data.platform === "leetcode" && data.profile.solvedBreakdown && (
+            <div className="rounded-2xl bg-zinc-900 border border-zinc-800 p-4 sm:p-5 shadow-lg">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <CheckCircle className="w-4 h-4 text-amber-400" />
+                  <h3 className="text-sm font-semibold text-white">Problems Solved</h3>
+                </div>
+                <span className="text-xs font-bold text-amber-400">
+                  {data.profile.solvedBreakdown.total} / {data.profile.solvedBreakdown.allTotal}
+                </span>
+              </div>
+
+              {/* 3 Difficulty Columns */}
+              <div className="grid grid-cols-3 gap-2.5 sm:gap-4">
+                {/* Easy */}
+                <div className="rounded-xl bg-zinc-950 p-3 border border-zinc-800/80">
+                  <div className="flex items-center justify-between text-xs mb-1">
+                    <span className="text-emerald-400 font-semibold text-[11px]">Easy</span>
+                    <span className="text-[10px] text-zinc-500 font-mono">
+                      {Math.round((data.profile.solvedBreakdown.easy / data.profile.solvedBreakdown.easyTotal) * 100)}%
+                    </span>
+                  </div>
+                  <div className="text-lg sm:text-xl font-bold text-white">
+                    {data.profile.solvedBreakdown.easy}
+                  </div>
+                  <div className="text-[10px] text-zinc-500">
+                    of {data.profile.solvedBreakdown.easyTotal}
+                  </div>
+                  <div className="w-full bg-zinc-800 h-1.5 rounded-full mt-2 overflow-hidden">
+                    <div
+                      style={{
+                        width: `${Math.min(
+                          (data.profile.solvedBreakdown.easy / data.profile.solvedBreakdown.easyTotal) * 100,
+                          100
+                        )}%`,
+                      }}
+                      className="bg-emerald-500 h-full rounded-full"
+                    ></div>
+                  </div>
+                </div>
+
+                {/* Medium */}
+                <div className="rounded-xl bg-zinc-950 p-3 border border-zinc-800/80">
+                  <div className="flex items-center justify-between text-xs mb-1">
+                    <span className="text-amber-400 font-semibold text-[11px]">Medium</span>
+                    <span className="text-[10px] text-zinc-500 font-mono">
+                      {Math.round((data.profile.solvedBreakdown.medium / data.profile.solvedBreakdown.mediumTotal) * 100)}%
+                    </span>
+                  </div>
+                  <div className="text-lg sm:text-xl font-bold text-white">
+                    {data.profile.solvedBreakdown.medium}
+                  </div>
+                  <div className="text-[10px] text-zinc-500">
+                    of {data.profile.solvedBreakdown.mediumTotal}
+                  </div>
+                  <div className="w-full bg-zinc-800 h-1.5 rounded-full mt-2 overflow-hidden">
+                    <div
+                      style={{
+                        width: `${Math.min(
+                          (data.profile.solvedBreakdown.medium / data.profile.solvedBreakdown.mediumTotal) * 100,
+                          100
+                        )}%`,
+                      }}
+                      className="bg-amber-500 h-full rounded-full"
+                    ></div>
+                  </div>
+                </div>
+
+                {/* Hard */}
+                <div className="rounded-xl bg-zinc-950 p-3 border border-zinc-800/80">
+                  <div className="flex items-center justify-between text-xs mb-1">
+                    <span className="text-rose-400 font-semibold text-[11px]">Hard</span>
+                    <span className="text-[10px] text-zinc-500 font-mono">
+                      {Math.round((data.profile.solvedBreakdown.hard / data.profile.solvedBreakdown.hardTotal) * 100)}%
+                    </span>
+                  </div>
+                  <div className="text-lg sm:text-xl font-bold text-white">
+                    {data.profile.solvedBreakdown.hard}
+                  </div>
+                  <div className="text-[10px] text-zinc-500">
+                    of {data.profile.solvedBreakdown.hardTotal}
+                  </div>
+                  <div className="w-full bg-zinc-800 h-1.5 rounded-full mt-2 overflow-hidden">
+                    <div
+                      style={{
+                        width: `${Math.min(
+                          (data.profile.solvedBreakdown.hard / data.profile.solvedBreakdown.hardTotal) * 100,
+                          100
+                        )}%`,
+                      }}
+                      className="bg-rose-500 h-full rounded-full"
+                    ></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* 4 Key Stat Cards */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3">
             {/* Total Contests */}
@@ -673,7 +959,12 @@ export default function Home() {
               </div>
               <div className="flex items-center gap-1.5">
                 <span className="text-2xl font-bold text-white">{data.profile.currentRating}</span>
-                <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${getRatingBadgeColor(data.profile.currentRating, data.platform)}`}>
+                <span
+                  className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${getRatingBadgeColor(
+                    data.profile.currentRating,
+                    data.platform
+                  )}`}
+                >
                   {data.profile.stars}
                 </span>
               </div>
@@ -697,8 +988,8 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Rating Progression Chart */}
-          {data.ratingHistory.length > 0 && (
+          {/* Rating Progression Chart (If user participated in contests) */}
+          {data.ratingHistory.length > 0 ? (
             <div className="rounded-2xl bg-zinc-900 border border-zinc-800 p-4 sm:p-6 shadow-lg">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-sm font-semibold text-white flex items-center gap-1.5">
@@ -783,68 +1074,76 @@ export default function Home() {
                 </div>
               </div>
             </div>
+          ) : (
+            data.platform === "leetcode" && (
+              <div className="rounded-xl bg-zinc-900 border border-zinc-800 p-4 text-center text-xs text-zinc-500">
+                User focuses on problem solving (No contest history yet on LeetCode).
+              </div>
+            )
           )}
 
           {/* Contest Breakdown Table */}
-          <div className="rounded-2xl bg-zinc-900 border border-zinc-800 p-4 sm:p-6 shadow-lg overflow-hidden">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-semibold text-white flex items-center gap-1.5">
-                <Calendar className="w-4 h-4 text-amber-400" />
-                Contests
-              </h3>
-              <span className="text-[11px] text-zinc-500">
-                {data.contests.length} Total
-              </span>
-            </div>
+          {data.contests.length > 0 && (
+            <div className="rounded-2xl bg-zinc-900 border border-zinc-800 p-4 sm:p-6 shadow-lg overflow-hidden">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-semibold text-white flex items-center gap-1.5">
+                  <Calendar className="w-4 h-4 text-amber-400" />
+                  Contests
+                </h3>
+                <span className="text-[11px] text-zinc-500">
+                  {data.contests.length} Total
+                </span>
+              </div>
 
-            <div className="overflow-x-auto -mx-4 sm:mx-0">
-              <div className="inline-block min-w-full align-middle px-4 sm:px-0">
-                <table className="min-w-full text-left text-xs">
-                  <thead>
-                    <tr className="border-b border-zinc-800 text-zinc-500 text-[10px] uppercase font-medium">
-                      <th className="py-2.5 px-3">Contest</th>
-                      <th className="py-2.5 px-3">Date</th>
-                      <th className="py-2.5 px-3">Rank</th>
-                      <th className="py-2.5 px-3">Rating</th>
-                      <th className="py-2.5 px-3">Change</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-zinc-800/50 text-zinc-300">
-                    {data.contests.map((c, i) => (
-                      <tr key={c.code + i} className="hover:bg-zinc-800/20 transition-colors">
-                        <td className="py-2.5 px-3 font-medium text-white whitespace-nowrap">
-                          <div className="flex items-center gap-1.5">
-                            <CheckCircle2 className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                            <span>{c.name}</span>
-                          </div>
-                        </td>
-                        <td className="py-2.5 px-3 text-zinc-500 whitespace-nowrap">{c.date}</td>
-                        <td className="py-2.5 px-3 font-mono text-zinc-400 whitespace-nowrap">
-                          {c.rank > 0 ? `#${c.rank}` : "—"}
-                        </td>
-                        <td className="py-2.5 px-3 font-semibold text-white whitespace-nowrap">{c.rating}</td>
-                        <td className="py-2.5 px-3 whitespace-nowrap">
-                          {c.delta > 0 ? (
-                            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-green-950/60 text-green-400 border border-green-500/20">
-                              <TrendingUp className="w-2.5 h-2.5" />
-                              +{c.delta}
-                            </span>
-                          ) : c.delta < 0 ? (
-                            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-red-950/60 text-red-400 border border-red-500/20">
-                              <TrendingDown className="w-2.5 h-2.5" />
-                              {c.delta}
-                            </span>
-                          ) : (
-                            <span className="text-zinc-500 text-[10px]">0</span>
-                          )}
-                        </td>
+              <div className="overflow-x-auto -mx-4 sm:mx-0">
+                <div className="inline-block min-w-full align-middle px-4 sm:px-0">
+                  <table className="min-w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-zinc-800 text-zinc-500 text-[10px] uppercase font-medium">
+                        <th className="py-2.5 px-3">Contest</th>
+                        <th className="py-2.5 px-3">Date</th>
+                        <th className="py-2.5 px-3">Rank</th>
+                        <th className="py-2.5 px-3">Rating</th>
+                        <th className="py-2.5 px-3">Change</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-800/50 text-zinc-300">
+                      {data.contests.map((c, i) => (
+                        <tr key={c.code + i} className="hover:bg-zinc-800/20 transition-colors">
+                          <td className="py-2.5 px-3 font-medium text-white whitespace-nowrap">
+                            <div className="flex items-center gap-1.5">
+                              <CheckCircle2 className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                              <span>{c.name}</span>
+                            </div>
+                          </td>
+                          <td className="py-2.5 px-3 text-zinc-500 whitespace-nowrap">{c.date}</td>
+                          <td className="py-2.5 px-3 font-mono text-zinc-400 whitespace-nowrap">
+                            {c.rank > 0 ? `#${c.rank}` : "—"}
+                          </td>
+                          <td className="py-2.5 px-3 font-semibold text-white whitespace-nowrap">{c.rating}</td>
+                          <td className="py-2.5 px-3 whitespace-nowrap">
+                            {c.delta > 0 ? (
+                              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-green-950/60 text-green-400 border border-green-500/20">
+                                <TrendingUp className="w-2.5 h-2.5" />
+                                +{c.delta}
+                              </span>
+                            ) : c.delta < 0 ? (
+                              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-red-950/60 text-red-400 border border-red-500/20">
+                                <TrendingDown className="w-2.5 h-2.5" />
+                                {c.delta}
+                              </span>
+                            ) : (
+                              <span className="text-zinc-500 text-[10px]">0</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
-          </div>
+          )}
         </div>
       )}
 

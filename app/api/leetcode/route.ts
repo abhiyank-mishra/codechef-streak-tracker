@@ -77,6 +77,10 @@ export async function GET(request: NextRequest) {
 
     const gqlQuery = `
       query getLeetCodeUser($username: String!) {
+        allQuestionsCount {
+          difficulty
+          count
+        }
         matchedUser(username: $username) {
           username
           profile {
@@ -85,11 +89,15 @@ export async function GET(request: NextRequest) {
             countryName
             ranking
           }
-          submitStats {
+          submitStatsGlobal {
             acSubmissionNum {
               difficulty
               count
             }
+          }
+          userCalendar {
+            streak
+            totalActiveDays
           }
         }
         userContestRanking(username: $username) {
@@ -154,9 +162,34 @@ export async function GET(request: NextRequest) {
     const currentRating = contestRanking?.rating ? Math.round(contestRanking.rating) : 1500;
     const stars = contestRanking?.badge?.name || (contestRanking?.topPercentage ? `Top ${contestRanking.topPercentage}%` : "Contestant");
 
-    // Solved stats
-    const submitStats = matchedUser.submitStats?.acSubmissionNum || [];
-    const allSolved = submitStats.find((s: any) => s.difficulty === "All")?.count || 0;
+    // Problem breakdown & totals
+    const submitStats = matchedUser.submitStatsGlobal?.acSubmissionNum || [];
+    const allCounts = json.data?.allQuestionsCount || [];
+
+    const easySolved = submitStats.find((s: any) => s.difficulty === "Easy")?.count || 0;
+    const mediumSolved = submitStats.find((s: any) => s.difficulty === "Medium")?.count || 0;
+    const hardSolved = submitStats.find((s: any) => s.difficulty === "Hard")?.count || 0;
+    const allSolved = submitStats.find((s: any) => s.difficulty === "All")?.count || (easySolved + mediumSolved + hardSolved);
+
+    const easyTotal = allCounts.find((s: any) => s.difficulty === "Easy")?.count || 900;
+    const mediumTotal = allCounts.find((s: any) => s.difficulty === "Medium")?.count || 2100;
+    const hardTotal = allCounts.find((s: any) => s.difficulty === "Hard")?.count || 980;
+    const allTotal = allCounts.find((s: any) => s.difficulty === "All")?.count || (easyTotal + mediumTotal + hardTotal);
+
+    const solvedBreakdown = {
+      easy: easySolved,
+      easyTotal,
+      medium: mediumSolved,
+      mediumTotal,
+      hard: hardSolved,
+      hardTotal,
+      total: allSolved,
+      allTotal,
+    };
+
+    const userCalendar = matchedUser.userCalendar;
+    const dailyStreak = userCalendar?.streak || 0;
+    const totalActiveDays = userCalendar?.totalActiveDays || 0;
 
     // Contest history
     const rawContests = (json.data?.userContestRankingHistory || [])
@@ -229,6 +262,7 @@ export async function GET(request: NextRequest) {
         userType: "LeetCoder",
         institution: null,
         problemsSolved: allSolved,
+        solvedBreakdown,
       },
       stats: {
         totalContests: processedContests.length,
@@ -238,10 +272,10 @@ export async function GET(request: NextRequest) {
           processedContests.length > 0
             ? processedContests[processedContests.length - 1]
             : null,
-        totalActiveDays: 0,
-        totalSubmissions: 0,
-        currentDailyStreak: 0,
-        maxDailyStreak: 0,
+        totalActiveDays,
+        totalSubmissions: allSolved,
+        currentDailyStreak: dailyStreak,
+        maxDailyStreak: dailyStreak,
       },
       contests: processedContests.reverse(), // latest first
       ratingHistory: processedContests.slice().reverse(), // ascending
