@@ -333,6 +333,7 @@ export async function GET(request: NextRequest) {
     });
 
     const responseData = {
+      platform: "codechef",
       profile: {
         username,
         name,

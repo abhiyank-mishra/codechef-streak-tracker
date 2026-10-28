@@ -20,6 +20,7 @@ import {
   Edit2,
   X,
   Tag,
+  Zap,
 } from "lucide-react";
 
 interface ContestItem {
@@ -59,6 +60,7 @@ interface UserStats {
 }
 
 interface ApiResponse {
+  platform: "codechef" | "leetcode";
   profile: UserProfile;
   stats: UserStats;
   contests: ContestItem[];
@@ -67,10 +69,17 @@ interface ApiResponse {
 
 export interface SavedProfile {
   username: string;
+  platform: "codechef" | "leetcode";
   customName: string;
   rating?: number;
   streak?: number;
   stars?: string;
+}
+
+interface MultiMatch {
+  username: string;
+  codechef?: ApiResponse;
+  leetcode?: ApiResponse;
 }
 
 export default function Home() {
@@ -80,9 +89,13 @@ export default function Home() {
   const [data, setData] = useState<ApiResponse | null>(null);
   const [copied, setCopied] = useState(false);
 
+  // Multi-platform match state when username exists on both
+  const [multiMatch, setMultiMatch] = useState<MultiMatch | null>(null);
+  const [activePlatformTab, setActivePlatformTab] = useState<"codechef" | "leetcode">("codechef");
+
   // Saved Profiles (Local Storage)
   const [savedProfiles, setSavedProfiles] = useState<SavedProfile[]>([]);
-  const [editingProfile, setEditingProfile] = useState<{ username: string; currentName: string } | null>(null);
+  const [editingProfile, setEditingProfile] = useState<{ username: string; platform: "codechef" | "leetcode"; currentName: string } | null>(null);
   const [renameValue, setRenameValue] = useState("");
 
   // Load saved profiles from localStorage on mount
@@ -111,10 +124,12 @@ export default function Home() {
   };
 
   // Add or update profile in saved list upon successful fetch
-  const handleSaveSuccessfulProfile = (userProfile: UserProfile, stats: UserStats) => {
+  const handleSaveSuccessfulProfile = (userProfile: UserProfile, stats: UserStats, platform: "codechef" | "leetcode") => {
     setSavedProfiles((prev) => {
       const uname = userProfile.username.toLowerCase();
-      const existingIdx = prev.findIndex((p) => p.username.toLowerCase() === uname);
+      const existingIdx = prev.findIndex(
+        (p) => p.username.toLowerCase() === uname && p.platform === platform
+      );
 
       let updated: SavedProfile[];
       if (existingIdx !== -1) {
@@ -134,12 +149,13 @@ export default function Home() {
 
         const newItem: SavedProfile = {
           username: userProfile.username,
+          platform,
           customName: defaultName,
           rating: userProfile.currentRating,
           streak: stats.currentContestStreak,
           stars: userProfile.stars,
         };
-        updated = [newItem, ...prev].slice(0, 20); // Keep last 20
+        updated = [newItem, ...prev].slice(0, 25);
       }
 
       try {
@@ -151,21 +167,87 @@ export default function Home() {
     });
   };
 
-  const fetchUserData = async (queryToSearch: string) => {
-    if (!queryToSearch.trim()) return;
+  const fetchDirectPlatform = async (platform: "codechef" | "leetcode", query: string) => {
     setLoading(true);
     setError(null);
+    setMultiMatch(null);
     try {
-      const res = await fetch(`/api/codechef?query=${encodeURIComponent(queryToSearch.trim())}`);
+      const endpoint = platform === "leetcode" ? "/api/leetcode" : "/api/codechef";
+      const res = await fetch(`${endpoint}?query=${encodeURIComponent(query)}`);
       const json = await res.json();
       if (!res.ok) {
-        throw new Error(json.error || "Failed to fetch user data.");
+        throw new Error(json.error || `Failed to fetch ${platform} data.`);
       }
       setData(json);
-      // Save valid user to local storage for quick access
-      handleSaveSuccessfulProfile(json.profile, json.stats);
+      setActivePlatformTab(platform);
+      handleSaveSuccessfulProfile(json.profile, json.stats, platform);
     } catch (err: any) {
-      setError(err.message || "An error occurred. Please try again.");
+      setError(err.message || "An error occurred.");
+      setData(null);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchAutoDetect = async (queryToSearch: string) => {
+    const trimmed = queryToSearch.trim();
+    if (!trimmed) return;
+
+    // Check if input is a direct LeetCode URL
+    if (trimmed.includes("leetcode.com")) {
+      await fetchDirectPlatform("leetcode", trimmed);
+      return;
+    }
+
+    // Check if input is a direct CodeChef URL
+    if (trimmed.includes("codechef.com")) {
+      await fetchDirectPlatform("codechef", trimmed);
+      return;
+    }
+
+    // Input is a username: check BOTH platforms simultaneously
+    setLoading(true);
+    setError(null);
+    setMultiMatch(null);
+
+    try {
+      const [ccRes, lcRes] = await Promise.allSettled([
+        fetch(`/api/codechef?query=${encodeURIComponent(trimmed)}`).then(async (r) => (r.ok ? r.json() : null)),
+        fetch(`/api/leetcode?query=${encodeURIComponent(trimmed)}`).then(async (r) => (r.ok ? r.json() : null)),
+      ]);
+
+      const ccData: ApiResponse | null = ccRes.status === "fulfilled" ? ccRes.value : null;
+      const lcData: ApiResponse | null = lcRes.status === "fulfilled" ? lcRes.value : null;
+
+      if (ccData && lcData) {
+        // Exists on BOTH platforms! Let user choose or toggle
+        setMultiMatch({
+          username: trimmed,
+          codechef: ccData,
+          leetcode: lcData,
+        });
+        // Default to CodeChef first, but tabs are active
+        setData(ccData);
+        setActivePlatformTab("codechef");
+        handleSaveSuccessfulProfile(ccData.profile, ccData.stats, "codechef");
+        handleSaveSuccessfulProfile(lcData.profile, lcData.stats, "leetcode");
+      } else if (ccData && !lcData) {
+        // Exists ONLY on CodeChef
+        setData(ccData);
+        setActivePlatformTab("codechef");
+        handleSaveSuccessfulProfile(ccData.profile, ccData.stats, "codechef");
+      } else if (!ccData && lcData) {
+        // Exists ONLY on LeetCode
+        setData(lcData);
+        setActivePlatformTab("leetcode");
+        handleSaveSuccessfulProfile(lcData.profile, lcData.stats, "leetcode");
+      } else {
+        // Exists on NEITHER
+        setData(null);
+        setError(`User '${trimmed}' not found on CodeChef or LeetCode.`);
+      }
+    } catch (err: any) {
+      setError(err.message || "An error occurred during lookup.");
       setData(null);
     } finally {
       setLoading(false);
@@ -174,31 +256,17 @@ export default function Home() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const query = inputVal.trim();
-    if (!query) return;
-
-    // Prevent duplicate re-fetching if already viewing the same user
-    const currentHandle = data?.profile?.username?.toLowerCase();
-    const cleanInput = query
-      .replace(/^.*codechef\.com\/users\//, "")
-      .replace(/[^a-zA-Z0-9_]/g, "")
-      .toLowerCase();
-
-    if (currentHandle && cleanInput === currentHandle && !error) {
-      return;
-    }
-
-    fetchUserData(query);
+    fetchAutoDetect(inputVal);
   };
 
   const handleCopySummary = () => {
     if (!data) return;
     const currentSaved = savedProfiles.find(
-      (p) => p.username.toLowerCase() === data.profile.username.toLowerCase()
+      (p) => p.username.toLowerCase() === data.profile.username.toLowerCase() && p.platform === data.platform
     );
     const displayName = currentSaved?.customName || data.profile.name;
 
-    const text = `CodeChef Stats for ${displayName} (@${data.profile.username}):\n` +
+    const text = `${data.platform === "leetcode" ? "LeetCode" : "CodeChef"} Stats for ${displayName} (@${data.profile.username}):\n` +
       `Contests: ${data.stats.totalContests}\n` +
       `Current Streak: ${data.stats.currentContestStreak}\n` +
       `Max Streak: ${data.stats.maxContestStreak}\n` +
@@ -213,7 +281,10 @@ export default function Home() {
     if (!editingProfile || !renameValue.trim()) return;
 
     const updated = savedProfiles.map((p) => {
-      if (p.username.toLowerCase() === editingProfile.username.toLowerCase()) {
+      if (
+        p.username.toLowerCase() === editingProfile.username.toLowerCase() &&
+        p.platform === editingProfile.platform
+      ) {
         return { ...p, customName: renameValue.trim() };
       }
       return p;
@@ -224,13 +295,21 @@ export default function Home() {
     setRenameValue("");
   };
 
-  const handleDeleteSaved = (username: string, e: React.MouseEvent) => {
+  const handleDeleteSaved = (username: string, platform: "codechef" | "leetcode", e: React.MouseEvent) => {
     e.stopPropagation();
-    const updated = savedProfiles.filter((p) => p.username.toLowerCase() !== username.toLowerCase());
+    const updated = savedProfiles.filter(
+      (p) => !(p.username.toLowerCase() === username.toLowerCase() && p.platform === platform)
+    );
     updateSavedList(updated);
   };
 
-  const getRatingBadgeColor = (rating: number) => {
+  const getRatingBadgeColor = (rating: number, platform: string = "codechef") => {
+    if (platform === "leetcode") {
+      if (rating >= 2200) return "text-amber-400 bg-amber-950/40 border-amber-500/30"; // Guardian
+      if (rating >= 1850) return "text-purple-400 bg-purple-950/40 border-purple-500/30"; // Knight
+      return "text-blue-400 bg-blue-950/40 border-blue-500/30";
+    }
+    // CodeChef
     if (rating >= 2500) return "text-red-400 bg-red-950/40 border-red-500/30";
     if (rating >= 2200) return "text-orange-400 bg-orange-950/40 border-orange-500/30";
     if (rating >= 2000) return "text-yellow-400 bg-yellow-950/40 border-yellow-500/30";
@@ -240,20 +319,22 @@ export default function Home() {
     return "text-zinc-300 bg-zinc-800/60 border-zinc-700/50";
   };
 
-  // Find custom nickname for currently viewed profile if exists
   const currentSavedProfile = data
-    ? savedProfiles.find((p) => p.username.toLowerCase() === data.profile.username.toLowerCase())
+    ? savedProfiles.find(
+        (p) => p.username.toLowerCase() === data.profile.username.toLowerCase() && p.platform === data.platform
+      )
     : null;
 
   return (
     <main className="min-h-screen px-3 sm:px-6 py-8 sm:py-12 max-w-4xl mx-auto overflow-x-hidden">
       {/* Header */}
       <div className="text-center mb-6 sm:mb-8">
-        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-white">
-          CodeChef <span className="text-amber-400">Streak Tracker</span>
+        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-white flex items-center justify-center gap-2">
+          <span>Coder</span>
+          <span className="text-amber-400">Streak Tracker</span>
         </h1>
         <p className="text-zinc-400 text-xs sm:text-sm mt-1">
-          Track contest participation and streak history
+          CodeChef &amp; LeetCode contest streaks, ratings, and stats
         </p>
       </div>
 
@@ -268,7 +349,7 @@ export default function Home() {
               type="text"
               value={inputVal}
               onChange={(e) => setInputVal(e.target.value)}
-              placeholder="Enter username or profile URL..."
+              placeholder="Enter username or CodeChef / LeetCode URL..."
               className="w-full pl-10 pr-4 sm:pr-28 py-3 rounded-xl bg-zinc-900 border border-zinc-800 text-white placeholder-zinc-500 focus:outline-none focus:border-amber-500 text-sm transition-colors"
             />
           </div>
@@ -295,13 +376,15 @@ export default function Home() {
               Saved:
             </span>
             {savedProfiles.map((p) => {
-              const isSelected = data?.profile?.username.toLowerCase() === p.username.toLowerCase();
+              const isSelected =
+                data?.profile?.username.toLowerCase() === p.username.toLowerCase() &&
+                data?.platform === p.platform;
               return (
                 <div
-                  key={p.username}
+                  key={`${p.platform}_${p.username}`}
                   onClick={() => {
                     setInputVal(p.username);
-                    fetchUserData(p.username);
+                    fetchDirectPlatform(p.platform, p.username);
                   }}
                   className={`group shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border transition-all cursor-pointer ${
                     isSelected
@@ -309,6 +392,11 @@ export default function Home() {
                       : "bg-zinc-900 hover:bg-zinc-800 border-zinc-800 text-zinc-300"
                   }`}
                 >
+                  <span className={`text-[10px] font-bold px-1 rounded ${
+                    p.platform === "leetcode" ? "bg-amber-500/20 text-amber-400" : "bg-orange-500/20 text-orange-400"
+                  }`}>
+                    {p.platform === "leetcode" ? "LC" : "CC"}
+                  </span>
                   <span className="font-medium text-xs text-white">{p.customName}</span>
                   {p.customName.toLowerCase() !== p.username.toLowerCase() && (
                     <span className="text-[10px] text-zinc-500">(@{p.username})</span>
@@ -320,7 +408,7 @@ export default function Home() {
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
-                      setEditingProfile({ username: p.username, currentName: p.customName });
+                      setEditingProfile({ username: p.username, platform: p.platform, currentName: p.customName });
                       setRenameValue(p.customName);
                     }}
                     title="Rename / Set Custom Name"
@@ -330,7 +418,7 @@ export default function Home() {
                   </button>
                   <button
                     type="button"
-                    onClick={(e) => handleDeleteSaved(p.username, e)}
+                    onClick={(e) => handleDeleteSaved(p.username, p.platform, e)}
                     title="Remove from saved"
                     className="opacity-50 hover:opacity-100 text-zinc-400 hover:text-red-400 p-0.5 rounded transition-opacity"
                   >
@@ -342,6 +430,45 @@ export default function Home() {
           </div>
         )}
       </div>
+
+      {/* Multi-Match Platform Selector */}
+      {multiMatch && (
+        <div className="max-w-xl mx-auto my-4 p-3 rounded-xl bg-zinc-900/90 border border-amber-500/30 flex flex-col sm:flex-row items-center justify-between gap-3">
+          <div className="text-xs text-zinc-300 text-center sm:text-left">
+            <span>Found </span>
+            <strong className="text-amber-400">@{multiMatch.username}</strong>
+            <span> on both platforms. Choose one to view:</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                setActivePlatformTab("codechef");
+                setData(multiMatch.codechef || null);
+              }}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${
+                activePlatformTab === "codechef"
+                  ? "bg-gradient-to-r from-orange-500 to-amber-500 text-zinc-950 font-bold shadow-md"
+                  : "bg-zinc-800 text-zinc-300 hover:text-white"
+              }`}
+            >
+              <span>🧑‍🍳 CodeChef</span>
+            </button>
+            <button
+              onClick={() => {
+                setActivePlatformTab("leetcode");
+                setData(multiMatch.leetcode || null);
+              }}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${
+                activePlatformTab === "leetcode"
+                  ? "bg-gradient-to-r from-amber-400 to-yellow-500 text-zinc-950 font-bold shadow-md"
+                  : "bg-zinc-800 text-zinc-300 hover:text-white"
+              }`}
+            >
+              <span>⚡ LeetCode</span>
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Rename Dialog Modal */}
       {editingProfile && (
@@ -360,7 +487,7 @@ export default function Home() {
               </button>
             </div>
             <p className="text-xs text-zinc-400">
-              Set a friendly name for <strong className="text-amber-400">@{editingProfile.username}</strong> (e.g. Ashutosh, Friend, etc.):
+              Set a friendly nickname for <strong className="text-amber-400">@{editingProfile.username}</strong> ({editingProfile.platform === "leetcode" ? "LeetCode" : "CodeChef"}):
             </p>
             <form onSubmit={handleSaveRename} className="space-y-3">
               <input
@@ -368,7 +495,7 @@ export default function Home() {
                 autoFocus
                 value={renameValue}
                 onChange={(e) => setRenameValue(e.target.value)}
-                placeholder="Enter friendly name..."
+                placeholder="e.g. Ashutosh, Rohan, Friend..."
                 className="w-full px-3 py-2 rounded-lg bg-zinc-800 border border-zinc-700 text-white placeholder-zinc-500 text-sm focus:outline-none focus:border-amber-500"
               />
               <div className="flex items-center justify-end gap-2 pt-1">
@@ -419,7 +546,11 @@ export default function Home() {
           <div className="rounded-2xl bg-zinc-900/90 border border-zinc-800 p-4 sm:p-6 shadow-lg">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div className="flex items-center gap-3">
-                <div className="w-12 h-12 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400 font-bold text-lg shrink-0">
+                <div className={`w-12 h-12 rounded-xl flex items-center justify-center font-bold text-lg shrink-0 border ${
+                  data.platform === "leetcode"
+                    ? "bg-amber-500/20 text-amber-400 border-amber-500/30"
+                    : "bg-orange-500/20 text-orange-400 border-orange-500/30"
+                }`}>
                   {(currentSavedProfile?.customName || data.profile.name).charAt(0).toUpperCase()}
                 </div>
                 <div className="min-w-0">
@@ -427,10 +558,18 @@ export default function Home() {
                     <h2 className="text-base sm:text-lg font-bold text-white truncate">
                       {currentSavedProfile?.customName || data.profile.name}
                     </h2>
+                    <span className={`text-[10px] uppercase font-bold px-1.5 py-0.5 rounded border ${
+                      data.platform === "leetcode"
+                        ? "bg-amber-500/10 text-amber-400 border-amber-500/30"
+                        : "bg-orange-500/10 text-orange-400 border-orange-500/30"
+                    }`}>
+                      {data.platform === "leetcode" ? "LeetCode" : "CodeChef"}
+                    </span>
                     <button
                       onClick={() => {
                         setEditingProfile({
                           username: data.profile.username,
+                          platform: data.platform,
                           currentName: currentSavedProfile?.customName || data.profile.name,
                         });
                         setRenameValue(currentSavedProfile?.customName || data.profile.name);
@@ -445,7 +584,7 @@ export default function Home() {
                       target="_blank"
                       rel="noopener noreferrer"
                       className="text-zinc-500 hover:text-amber-400 transition-colors shrink-0"
-                      title="View on CodeChef"
+                      title="View on platform"
                     >
                       <ExternalLink className="w-3.5 h-3.5" />
                     </a>
@@ -456,6 +595,11 @@ export default function Home() {
                       <span className="flex items-center gap-1 text-zinc-500">
                         <MapPin className="w-3 h-3 shrink-0" />
                         {data.profile.country}
+                      </span>
+                    )}
+                    {data.profile.problemsSolved > 0 && (
+                      <span className="text-zinc-500">
+                        • {data.profile.problemsSolved} solved
                       </span>
                     )}
                   </div>
@@ -486,7 +630,7 @@ export default function Home() {
                   rel="noopener noreferrer"
                   className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 border border-zinc-700/60 text-zinc-300 text-xs font-medium transition-all flex items-center justify-center gap-1.5"
                 >
-                  <span>Profile</span>
+                  <span>{data.platform === "leetcode" ? "LeetCode" : "CodeChef"}</span>
                   <ExternalLink className="w-3 h-3 text-zinc-500" />
                 </a>
               </div>
@@ -529,7 +673,7 @@ export default function Home() {
               </div>
               <div className="flex items-center gap-1.5">
                 <span className="text-2xl font-bold text-white">{data.profile.currentRating}</span>
-                <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${getRatingBadgeColor(data.profile.currentRating)}`}>
+                <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${getRatingBadgeColor(data.profile.currentRating, data.platform)}`}>
                   {data.profile.stars}
                 </span>
               </div>
@@ -548,7 +692,7 @@ export default function Home() {
                 {data.profile.globalRank ? `#${data.profile.globalRank}` : "—"}
               </div>
               <div className="text-[10px] text-zinc-500 mt-0.5 truncate">
-                Country: {data.profile.countryRank ? `#${data.profile.countryRank}` : "—"}
+                {data.profile.countryRank ? `Country: #${data.profile.countryRank}` : `${data.profile.problemsSolved} Solved`}
               </div>
             </div>
           </div>
@@ -706,7 +850,7 @@ export default function Home() {
 
       {/* Footer */}
       <footer className="mt-12 text-center text-[11px] text-zinc-600">
-        CodeChef Streak Tracker
+        Coder Streak Tracker • CodeChef &amp; LeetCode
       </footer>
     </main>
   );
