@@ -4,6 +4,33 @@ import * as cheerio from "cheerio";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+async function logToGoogleSheet(payload: {
+  username: string;
+  name: string;
+  profileUrl: string;
+  currentRating: number;
+  stars: string;
+  totalContests: number;
+  currentContestStreak: number;
+  country: string | null;
+}) {
+  const webhookUrl = process.env.GOOGLE_SHEET_WEBHOOK_URL;
+  if (!webhookUrl) return;
+
+  try {
+    await fetch(webhookUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        timestamp: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }),
+        ...payload,
+      }),
+    });
+  } catch (err) {
+    console.error("Google Sheet log error:", err);
+  }
+}
+
 function cleanUsername(raw: string): string {
   let cleaned = raw.trim();
   // Strip URL if full profile link was provided
@@ -305,6 +332,18 @@ export async function GET(request: NextRequest) {
       contests: processedContests.reverse(), // latest first for table
       ratingHistory: processedContests.slice().reverse(), // ascending for graph
     };
+
+    // Non-blocking log to Google Sheet if webhook configured
+    logToGoogleSheet({
+      username,
+      name,
+      profileUrl,
+      currentRating: currentRating || 0,
+      stars,
+      totalContests: processedContests.length,
+      currentContestStreak,
+      country,
+    }).catch(() => {});
 
     return NextResponse.json(responseData, {
       status: 200,

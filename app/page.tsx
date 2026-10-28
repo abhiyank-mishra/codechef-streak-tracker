@@ -65,7 +65,7 @@ interface ApiResponse {
 }
 
 export default function Home() {
-  const [inputVal, setInputVal] = useState("https://www.codechef.com/users/abhiyank_in");
+  const [inputVal, setInputVal] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<ApiResponse | null>(null);
@@ -89,11 +89,6 @@ export default function Home() {
       setLoading(false);
     }
   };
-
-  useEffect(() => {
-    // Initial fetch for demo
-    fetchUserData("abhiyank_in");
-  }, []);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -207,6 +202,39 @@ export default function Home() {
             ))}
           </div>
           <div className="h-64 rounded-3xl bg-zinc-800/40 border border-zinc-700/40"></div>
+        </div>
+      )}
+
+      {/* Empty State / Welcome Screen */}
+      {!loading && !data && !error && (
+        <div className="text-center py-12 px-6 rounded-3xl bg-zinc-900/40 border border-zinc-800/80 max-w-2xl mx-auto space-y-4">
+          <div className="w-16 h-16 mx-auto rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
+            <Flame className="w-8 h-8 animate-pulse" />
+          </div>
+          <h3 className="text-xl font-bold text-white">Kisi bhi CodeChef profile ka link ya username daalein</h3>
+          <p className="text-zinc-400 text-sm max-w-md mx-auto">
+            Upar diye gaye search box me apni ya kisi bhi dost ki CodeChef profile URL (jaise <span className="text-amber-400">codechef.com/users/...</span>) paste karein aur &quot;Check Streak&quot; par click karein.
+          </p>
+          <div className="pt-2 flex flex-wrap justify-center gap-3">
+            <button
+              onClick={() => {
+                setInputVal("abhiyank_in");
+                fetchUserData("abhiyank_in");
+              }}
+              className="px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-amber-300 text-xs font-medium border border-zinc-700 transition-all"
+            >
+              Check @abhiyank_in
+            </button>
+            <button
+              onClick={() => {
+                setInputVal("tourist");
+                fetchUserData("tourist");
+              }}
+              className="px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-medium border border-zinc-700 transition-all"
+            >
+              Check @tourist
+            </button>
+          </div>
         </div>
       )}
 
