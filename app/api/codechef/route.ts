@@ -82,7 +82,7 @@ export async function GET(request: NextRequest) {
 
     if (!query) {
       return NextResponse.json(
-        { error: "Username ya CodeChef profile URL daalna zaroori hai." },
+        { error: "Please enter a CodeChef username or profile link." },
         { status: 400 }
       );
     }
@@ -90,7 +90,7 @@ export async function GET(request: NextRequest) {
     const username = cleanUsername(query);
     if (!username) {
       return NextResponse.json(
-        { error: "Valid username nahi mila. Kripya check karein." },
+        { error: "Invalid username. Please check and try again." },
         { status: 400 }
       );
     }
@@ -109,14 +109,14 @@ export async function GET(request: NextRequest) {
 
     if (res.status === 404) {
       return NextResponse.json(
-        { error: `User '${username}' CodeChef par nahi mila (404 Not Found).` },
+        { error: `User '${username}' not found on CodeChef.` },
         { status: 404 }
       );
     }
 
     if (!res.ok) {
       return NextResponse.json(
-        { error: `CodeChef se connect nahi ho saka (Status: ${res.status}).` },
+        { error: `Failed to connect to CodeChef (Status: ${res.status}).` },
         { status: 502 }
       );
     }
@@ -374,7 +374,7 @@ export async function GET(request: NextRequest) {
   } catch (error: any) {
     console.error("API error:", error);
     return NextResponse.json(
-      { error: "Internal Server Error: " + (error?.message || "Kuch galat hua") },
+      { error: "Internal Server Error: " + (error?.message || "Failed to process request") },
       { status: 500 }
     );
   }
