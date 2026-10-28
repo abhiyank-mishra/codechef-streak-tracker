@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   Flame,
   Trophy,
@@ -17,6 +17,9 @@ import {
   Check,
   AlertCircle,
   RefreshCw,
+  Edit2,
+  X,
+  Tag,
 } from "lucide-react";
 
 interface ContestItem {
@@ -62,12 +65,91 @@ interface ApiResponse {
   ratingHistory: ContestItem[];
 }
 
+export interface SavedProfile {
+  username: string;
+  customName: string;
+  rating?: number;
+  streak?: number;
+  stars?: string;
+}
+
 export default function Home() {
   const [inputVal, setInputVal] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<ApiResponse | null>(null);
   const [copied, setCopied] = useState(false);
+
+  // Saved Profiles (Local Storage)
+  const [savedProfiles, setSavedProfiles] = useState<SavedProfile[]>([]);
+  const [editingProfile, setEditingProfile] = useState<{ username: string; currentName: string } | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+
+  // Load saved profiles from localStorage on mount
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem("cc_saved_profiles");
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          setSavedProfiles(parsed);
+        }
+      }
+    } catch (e) {
+      console.error("Failed to load saved profiles from localStorage:", e);
+    }
+  }, []);
+
+  // Update localStorage helper
+  const updateSavedList = (list: SavedProfile[]) => {
+    setSavedProfiles(list);
+    try {
+      localStorage.setItem("cc_saved_profiles", JSON.stringify(list));
+    } catch (e) {
+      console.error("Failed to write to localStorage:", e);
+    }
+  };
+
+  // Add or update profile in saved list upon successful fetch
+  const handleSaveSuccessfulProfile = (userProfile: UserProfile, stats: UserStats) => {
+    setSavedProfiles((prev) => {
+      const uname = userProfile.username.toLowerCase();
+      const existingIdx = prev.findIndex((p) => p.username.toLowerCase() === uname);
+
+      let updated: SavedProfile[];
+      if (existingIdx !== -1) {
+        const existing = prev[existingIdx];
+        const updatedItem: SavedProfile = {
+          ...existing,
+          rating: userProfile.currentRating,
+          streak: stats.currentContestStreak,
+          stars: userProfile.stars,
+        };
+        updated = [updatedItem, ...prev.filter((_, i) => i !== existingIdx)];
+      } else {
+        const defaultName =
+          userProfile.name && userProfile.name !== userProfile.username
+            ? userProfile.name
+            : userProfile.username;
+
+        const newItem: SavedProfile = {
+          username: userProfile.username,
+          customName: defaultName,
+          rating: userProfile.currentRating,
+          streak: stats.currentContestStreak,
+          stars: userProfile.stars,
+        };
+        updated = [newItem, ...prev].slice(0, 20); // Keep last 20
+      }
+
+      try {
+        localStorage.setItem("cc_saved_profiles", JSON.stringify(updated));
+      } catch (e) {
+        console.error("Failed to save to localStorage:", e);
+      }
+      return updated;
+    });
+  };
 
   const fetchUserData = async (queryToSearch: string) => {
     if (!queryToSearch.trim()) return;
@@ -80,6 +162,8 @@ export default function Home() {
         throw new Error(json.error || "Failed to fetch user data.");
       }
       setData(json);
+      // Save valid user to local storage for quick access
+      handleSaveSuccessfulProfile(json.profile, json.stats);
     } catch (err: any) {
       setError(err.message || "An error occurred. Please try again.");
       setData(null);
@@ -109,7 +193,12 @@ export default function Home() {
 
   const handleCopySummary = () => {
     if (!data) return;
-    const text = `CodeChef Stats for ${data.profile.name} (@${data.profile.username}):\n` +
+    const currentSaved = savedProfiles.find(
+      (p) => p.username.toLowerCase() === data.profile.username.toLowerCase()
+    );
+    const displayName = currentSaved?.customName || data.profile.name;
+
+    const text = `CodeChef Stats for ${displayName} (@${data.profile.username}):\n` +
       `Contests: ${data.stats.totalContests}\n` +
       `Current Streak: ${data.stats.currentContestStreak}\n` +
       `Max Streak: ${data.stats.maxContestStreak}\n` +
@@ -117,6 +206,28 @@ export default function Home() {
     navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleSaveRename = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingProfile || !renameValue.trim()) return;
+
+    const updated = savedProfiles.map((p) => {
+      if (p.username.toLowerCase() === editingProfile.username.toLowerCase()) {
+        return { ...p, customName: renameValue.trim() };
+      }
+      return p;
+    });
+
+    updateSavedList(updated);
+    setEditingProfile(null);
+    setRenameValue("");
+  };
+
+  const handleDeleteSaved = (username: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const updated = savedProfiles.filter((p) => p.username.toLowerCase() !== username.toLowerCase());
+    updateSavedList(updated);
   };
 
   const getRatingBadgeColor = (rating: number) => {
@@ -128,6 +239,11 @@ export default function Home() {
     if (rating >= 1400) return "text-green-400 bg-green-950/40 border-green-500/30";
     return "text-zinc-300 bg-zinc-800/60 border-zinc-700/50";
   };
+
+  // Find custom nickname for currently viewed profile if exists
+  const currentSavedProfile = data
+    ? savedProfiles.find((p) => p.username.toLowerCase() === data.profile.username.toLowerCase())
+    : null;
 
   return (
     <main className="min-h-screen px-3 sm:px-6 py-8 sm:py-12 max-w-4xl mx-auto overflow-x-hidden">
@@ -142,7 +258,7 @@ export default function Home() {
       </div>
 
       {/* Search Input */}
-      <div className="max-w-xl mx-auto mb-8">
+      <div className="max-w-xl mx-auto mb-4">
         <form onSubmit={handleSubmit} className="flex flex-col sm:flex-row items-stretch gap-2 sm:gap-0 sm:relative">
           <div className="relative flex-1">
             <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none">
@@ -171,11 +287,113 @@ export default function Home() {
             )}
           </button>
         </form>
+
+        {/* Quick Access / Saved Profiles Chips */}
+        {savedProfiles.length > 0 && (
+          <div className="mt-3.5 flex items-center gap-2 overflow-x-auto pb-1 text-xs no-scrollbar">
+            <span className="text-[10px] text-zinc-500 uppercase tracking-wider font-semibold shrink-0">
+              Saved:
+            </span>
+            {savedProfiles.map((p) => {
+              const isSelected = data?.profile?.username.toLowerCase() === p.username.toLowerCase();
+              return (
+                <div
+                  key={p.username}
+                  onClick={() => {
+                    setInputVal(p.username);
+                    fetchUserData(p.username);
+                  }}
+                  className={`group shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border transition-all cursor-pointer ${
+                    isSelected
+                      ? "bg-amber-500/20 border-amber-500/40 text-amber-300"
+                      : "bg-zinc-900 hover:bg-zinc-800 border-zinc-800 text-zinc-300"
+                  }`}
+                >
+                  <span className="font-medium text-xs text-white">{p.customName}</span>
+                  {p.customName.toLowerCase() !== p.username.toLowerCase() && (
+                    <span className="text-[10px] text-zinc-500">(@{p.username})</span>
+                  )}
+                  {p.streak !== undefined && p.streak > 0 && (
+                    <span className="text-[10px] text-amber-400 font-bold">🔥{p.streak}</span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setEditingProfile({ username: p.username, currentName: p.customName });
+                      setRenameValue(p.customName);
+                    }}
+                    title="Rename / Set Custom Name"
+                    className="opacity-50 hover:opacity-100 text-zinc-400 hover:text-amber-400 p-0.5 rounded transition-opacity"
+                  >
+                    <Edit2 className="w-3 h-3" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => handleDeleteSaved(p.username, e)}
+                    title="Remove from saved"
+                    className="opacity-50 hover:opacity-100 text-zinc-400 hover:text-red-400 p-0.5 rounded transition-opacity"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
+
+      {/* Rename Dialog Modal */}
+      {editingProfile && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-sm rounded-2xl bg-zinc-900 border border-zinc-800 p-5 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Tag className="w-4 h-4 text-amber-400" />
+                <h3 className="text-sm font-semibold text-white">Custom Name</h3>
+              </div>
+              <button
+                onClick={() => setEditingProfile(null)}
+                className="text-zinc-500 hover:text-white transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-xs text-zinc-400">
+              Set a friendly name for <strong className="text-amber-400">@{editingProfile.username}</strong> (e.g. Ashutosh, Friend, etc.):
+            </p>
+            <form onSubmit={handleSaveRename} className="space-y-3">
+              <input
+                type="text"
+                autoFocus
+                value={renameValue}
+                onChange={(e) => setRenameValue(e.target.value)}
+                placeholder="Enter friendly name..."
+                className="w-full px-3 py-2 rounded-lg bg-zinc-800 border border-zinc-700 text-white placeholder-zinc-500 text-sm focus:outline-none focus:border-amber-500"
+              />
+              <div className="flex items-center justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setEditingProfile(null)}
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium text-zinc-400 hover:text-white transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-zinc-950 font-medium text-xs transition-colors"
+                >
+                  Save Name
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Error Message */}
       {error && (
-        <div className="max-w-xl mx-auto mb-6 p-3.5 rounded-xl bg-red-950/30 border border-red-500/30 text-red-200 flex items-center gap-2.5 text-xs sm:text-sm">
+        <div className="max-w-xl mx-auto my-6 p-3.5 rounded-xl bg-red-950/30 border border-red-500/30 text-red-200 flex items-center gap-2.5 text-xs sm:text-sm">
           <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
           <span>{error}</span>
         </div>
@@ -183,7 +401,7 @@ export default function Home() {
 
       {/* Loading Skeleton */}
       {loading && (
-        <div className="space-y-4 animate-pulse">
+        <div className="space-y-4 animate-pulse mt-6">
           <div className="h-24 rounded-2xl bg-zinc-900 border border-zinc-800"></div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {[1, 2, 3, 4].map((i) => (
@@ -196,17 +414,32 @@ export default function Home() {
 
       {/* Main Results Display */}
       {!loading && data && (
-        <div className="space-y-4 sm:space-y-6">
+        <div className="space-y-4 sm:space-y-6 mt-6">
           {/* User Profile Card */}
           <div className="rounded-2xl bg-zinc-900/90 border border-zinc-800 p-4 sm:p-6 shadow-lg">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div className="flex items-center gap-3">
                 <div className="w-12 h-12 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400 font-bold text-lg shrink-0">
-                  {data.profile.name.charAt(0).toUpperCase()}
+                  {(currentSavedProfile?.customName || data.profile.name).charAt(0).toUpperCase()}
                 </div>
                 <div className="min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    <h2 className="text-base sm:text-lg font-bold text-white truncate">{data.profile.name}</h2>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-base sm:text-lg font-bold text-white truncate">
+                      {currentSavedProfile?.customName || data.profile.name}
+                    </h2>
+                    <button
+                      onClick={() => {
+                        setEditingProfile({
+                          username: data.profile.username,
+                          currentName: currentSavedProfile?.customName || data.profile.name,
+                        });
+                        setRenameValue(currentSavedProfile?.customName || data.profile.name);
+                      }}
+                      title="Set custom nickname"
+                      className="text-zinc-500 hover:text-amber-400 p-1 rounded transition-colors"
+                    >
+                      <Edit2 className="w-3.5 h-3.5" />
+                    </button>
                     <a
                       href={data.profile.profileUrl}
                       target="_blank"

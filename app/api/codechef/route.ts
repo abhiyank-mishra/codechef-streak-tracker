@@ -98,6 +98,7 @@ export async function GET(request: NextRequest) {
     const profileUrl = `https://www.codechef.com/users/${username}`;
 
     const res = await fetch(profileUrl, {
+      redirect: "manual",
       headers: {
         "User-Agent":
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -107,9 +108,10 @@ export async function GET(request: NextRequest) {
       next: { revalidate: 60 }, // Cache on Vercel for 60 seconds
     });
 
-    if (res.status === 404) {
+    // CodeChef issues a 302 redirect to homepage when the user DOES NOT EXIST
+    if (res.status === 302 || res.status === 301 || res.status === 404) {
       return NextResponse.json(
-        { error: `User '${username}' not found on CodeChef.` },
+        { error: `User '${username}' does not exist on CodeChef.` },
         { status: 404 }
       );
     }
@@ -122,6 +124,15 @@ export async function GET(request: NextRequest) {
     }
 
     const html = await res.text();
+
+    // Verify it is an actual user profile page and not a redirect or error payload
+    if (!html.includes("date_versus_rating") && !html.includes("user-details")) {
+      return NextResponse.json(
+        { error: `User '${username}' does not exist on CodeChef.` },
+        { status: 404 }
+      );
+    }
+
     const $ = cheerio.load(html);
 
     // Profile details
