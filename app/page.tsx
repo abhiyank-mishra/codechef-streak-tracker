@@ -90,7 +90,21 @@ export default function Home() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    fetchUserData(inputVal);
+    const query = inputVal.trim();
+    if (!query) return;
+
+    // Prevent duplicate re-fetching if already viewing the same user
+    const currentHandle = data?.profile?.username?.toLowerCase();
+    const cleanInput = query
+      .replace(/^.*codechef\.com\/users\//, "")
+      .replace(/[^a-zA-Z0-9_]/g, "")
+      .toLowerCase();
+
+    if (currentHandle && cleanInput === currentHandle && !error) {
+      return;
+    }
+
+    fetchUserData(query);
   };
 
   const handleCopySummary = () => {

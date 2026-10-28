@@ -4,6 +4,9 @@ import * as cheerio from "cheerio";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+// In-memory cache to prevent duplicate Google Sheet logging for the same user within 30 minutes
+const recentlyLogged = new Map<string, number>();
+
 async function logToGoogleSheet(payload: {
   username: string;
   name: string;
@@ -16,6 +19,23 @@ async function logToGoogleSheet(payload: {
 }) {
   const webhookUrl = process.env.GOOGLE_SHEET_WEBHOOK_URL;
   if (!webhookUrl) return;
+
+  const now = Date.now();
+  const lowerUser = payload.username.toLowerCase();
+  const lastTime = recentlyLogged.get(lowerUser);
+
+  // If logged in the last 30 minutes, skip sending duplicate log
+  if (lastTime && now - lastTime < 30 * 60 * 1000) {
+    return;
+  }
+  recentlyLogged.set(lowerUser, now);
+
+  // Garbage collect cache if map grows large
+  if (recentlyLogged.size > 2000) {
+    for (const [key, time] of recentlyLogged.entries()) {
+      if (now - time > 30 * 60 * 1000) recentlyLogged.delete(key);
+    }
+  }
 
   try {
     await fetch(webhookUrl, {
