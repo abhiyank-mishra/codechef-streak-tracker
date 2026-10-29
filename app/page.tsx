@@ -23,7 +23,17 @@ import {
   BarChart3,
   Code2,
   CheckCircle,
+  BookOpen,
+  GitBranch,
 } from "lucide-react";
+
+export type PlatformType =
+  | "codechef"
+  | "leetcode"
+  | "codeforces"
+  | "gfg"
+  | "atcoder"
+  | "github";
 
 interface ContestItem {
   code: string;
@@ -59,6 +69,7 @@ interface UserProfile {
   userType: string | null;
   institution: string | null;
   problemsSolved: number;
+  avatar?: string | null;
   solvedBreakdown?: SolvedBreakdown;
 }
 
@@ -74,7 +85,7 @@ interface UserStats {
 }
 
 interface ApiResponse {
-  platform: "codechef" | "leetcode";
+  platform: PlatformType;
   profile: UserProfile;
   stats: UserStats;
   contests: ContestItem[];
@@ -83,7 +94,7 @@ interface ApiResponse {
 
 export interface SavedProfile {
   username: string;
-  platform: "codechef" | "leetcode";
+  platform: PlatformType;
   customName: string;
   rating?: number;
   streak?: number;
@@ -91,28 +102,110 @@ export interface SavedProfile {
   problemsSolved?: number;
 }
 
-interface MultiMatch {
-  username: string;
-  codechef?: ApiResponse;
-  leetcode?: ApiResponse;
+const PLATFORM_CONFIG: Record<
+  PlatformType,
+  {
+    name: string;
+    shortLabel: string;
+    color: string;
+    accentBg: string;
+    accentText: string;
+    border: string;
+  }
+> = {
+  codechef: {
+    name: "CodeChef",
+    shortLabel: "CC",
+    color: "#ea580c",
+    accentBg: "bg-orange-500/10",
+    accentText: "text-orange-400",
+    border: "border-orange-500/30",
+  },
+  leetcode: {
+    name: "LeetCode",
+    shortLabel: "LC",
+    color: "#f59e0b",
+    accentBg: "bg-amber-500/10",
+    accentText: "text-amber-400",
+    border: "border-amber-500/30",
+  },
+  codeforces: {
+    name: "Codeforces",
+    shortLabel: "CF",
+    color: "#ef4444",
+    accentBg: "bg-red-500/10",
+    accentText: "text-red-400",
+    border: "border-red-500/30",
+  },
+  gfg: {
+    name: "GeeksforGeeks",
+    shortLabel: "GFG",
+    color: "#10b981",
+    accentBg: "bg-emerald-500/10",
+    accentText: "text-emerald-400",
+    border: "border-emerald-500/30",
+  },
+  atcoder: {
+    name: "AtCoder",
+    shortLabel: "AC",
+    color: "#06b6d4",
+    accentBg: "bg-cyan-500/10",
+    accentText: "text-cyan-400",
+    border: "border-cyan-500/30",
+  },
+  github: {
+    name: "GitHub",
+    shortLabel: "GH",
+    color: "#a855f7",
+    accentBg: "bg-purple-500/10",
+    accentText: "text-purple-400",
+    border: "border-purple-500/30",
+  },
+};
+
+const PLATFORMS_FILTER: Array<{
+  id: "all" | PlatformType;
+  label: string;
+}> = [
+  { id: "all", label: "All" },
+  { id: "codechef", label: "CodeChef" },
+  { id: "leetcode", label: "LeetCode" },
+  { id: "codeforces", label: "Codeforces" },
+  { id: "gfg", label: "GFG" },
+  { id: "atcoder", label: "AtCoder" },
+  { id: "github", label: "GitHub" },
+];
+
+function detectPlatformFromUrl(input: string): PlatformType | null {
+  const lower = input.toLowerCase();
+  if (lower.includes("codechef.com")) return "codechef";
+  if (lower.includes("leetcode.com")) return "leetcode";
+  if (lower.includes("codeforces.com")) return "codeforces";
+  if (lower.includes("geeksforgeeks.org")) return "gfg";
+  if (lower.includes("atcoder.jp")) return "atcoder";
+  if (lower.includes("github.com")) return "github";
+  return null;
 }
 
 export default function Home() {
   const [inputVal, setInputVal] = useState("");
+  const [selectedFilter, setSelectedFilter] = useState<"all" | PlatformType>("all");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Active single view data
   const [data, setData] = useState<ApiResponse | null>(null);
   const [copied, setCopied] = useState(false);
 
-  // Multi-platform match state when username exists on both
-  const [multiMatch, setMultiMatch] = useState<MultiMatch | null>(null);
-  const [activeView, setActiveView] = useState<"codechef" | "leetcode" | "compare">("codechef");
+  // Discovered multi-platform matches for a handle
+  const [multiMatches, setMultiMatches] = useState<ApiResponse[]>([]);
+  const [activeView, setActiveView] = useState<PlatformType | "compare">("compare");
 
   // Saved Profiles (Local Storage)
   const [savedProfiles, setSavedProfiles] = useState<SavedProfile[]>([]);
   const [editingProfile, setEditingProfile] = useState<{
     username: string;
-    platform: "codechef" | "leetcode";
+    platform: PlatformType;
     currentName: string;
   } | null>(null);
   const [renameValue, setRenameValue] = useState("");
@@ -132,7 +225,6 @@ export default function Home() {
     }
   }, []);
 
-  // Update localStorage helper
   const updateSavedList = (list: SavedProfile[]) => {
     setSavedProfiles(list);
     try {
@@ -142,11 +234,10 @@ export default function Home() {
     }
   };
 
-  // Add or update profile in saved list upon successful fetch
   const handleSaveSuccessfulProfile = (
     userProfile: UserProfile,
     stats: UserStats,
-    platform: "codechef" | "leetcode"
+    platform: PlatformType
   ) => {
     setSavedProfiles((prev) => {
       const uname = userProfile.username.toLowerCase();
@@ -164,116 +255,107 @@ export default function Home() {
           stars: userProfile.stars,
           problemsSolved: userProfile.problemsSolved,
         };
-        updated = [updatedItem, ...prev.filter((_, i) => i !== existingIdx)];
+        updated = [...prev];
+        updated[existingIdx] = updatedItem;
       } else {
-        const defaultName =
-          userProfile.name && userProfile.name !== userProfile.username
-            ? userProfile.name
-            : userProfile.username;
-
         const newItem: SavedProfile = {
           username: userProfile.username,
           platform,
-          customName: defaultName,
+          customName: userProfile.name || userProfile.username,
           rating: userProfile.currentRating,
           streak: stats.currentContestStreak,
           stars: userProfile.stars,
           problemsSolved: userProfile.problemsSolved,
         };
-        updated = [newItem, ...prev].slice(0, 25);
+        updated = [newItem, ...prev.slice(0, 19)];
       }
 
       try {
         localStorage.setItem("cc_saved_profiles", JSON.stringify(updated));
       } catch (e) {
-        console.error("Failed to save to localStorage:", e);
+        console.error("Failed to write to localStorage:", e);
       }
       return updated;
     });
   };
 
-  const fetchDirectPlatform = async (platform: "codechef" | "leetcode", query: string) => {
-    setLoading(true);
-    setError(null);
-    setMultiMatch(null);
+  // Fetch a specific platform directly
+  const fetchSinglePlatform = async (platform: PlatformType, handle: string): Promise<ApiResponse | null> => {
     try {
-      const endpoint = platform === "leetcode" ? "/api/leetcode" : "/api/codechef";
-      const res = await fetch(`${endpoint}?query=${encodeURIComponent(query)}`);
-      const json = await res.json();
-      if (!res.ok) {
-        throw new Error(json.error || `Failed to fetch ${platform} data.`);
-      }
-      setData(json);
-      setActiveView(platform);
-      handleSaveSuccessfulProfile(json.profile, json.stats, platform);
-    } catch (err: any) {
-      setError(err.message || "An error occurred.");
-      setData(null);
-    } finally {
-      setLoading(false);
+      const res = await fetch(`/api/${platform}?username=${encodeURIComponent(handle)}`);
+      if (!res.ok) return null;
+      const json: ApiResponse = await res.json();
+      return json;
+    } catch {
+      return null;
     }
   };
 
-  const fetchAutoDetect = async (queryToSearch: string) => {
-    const trimmed = queryToSearch.trim();
-    if (!trimmed) return;
-
-    // Check if input is a direct LeetCode URL
-    if (trimmed.includes("leetcode.com")) {
-      await fetchDirectPlatform("leetcode", trimmed);
+  const handleSearch = async (query: string, targetPlatform: "all" | PlatformType = selectedFilter) => {
+    const trimmed = query.trim();
+    if (!trimmed) {
+      setError("Please enter a username or profile URL.");
       return;
     }
 
-    // Check if input is a direct CodeChef URL
-    if (trimmed.includes("codechef.com")) {
-      await fetchDirectPlatform("codechef", trimmed);
-      return;
-    }
-
-    // Input is a plain username: check BOTH platforms simultaneously
     setLoading(true);
     setError(null);
-    setMultiMatch(null);
+    setData(null);
+    setMultiMatches([]);
 
+    // Check if input is a direct profile URL
+    const detectedPlatform = detectPlatformFromUrl(trimmed);
+    const effectivePlatform = detectedPlatform || (targetPlatform !== "all" ? targetPlatform : null);
+
+    if (effectivePlatform) {
+      try {
+        const result = await fetchSinglePlatform(effectivePlatform, trimmed);
+        if (!result) {
+          setError(`No profile found on ${PLATFORM_CONFIG[effectivePlatform].name} for '${trimmed}'.`);
+          setLoading(false);
+          return;
+        }
+        setData(result);
+        setActiveView(effectivePlatform);
+        setMultiMatches([result]);
+        handleSaveSuccessfulProfile(result.profile, result.stats, effectivePlatform);
+      } catch (err: any) {
+        setError(err.message || "Failed to fetch profile.");
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    // Query multiple platforms in parallel
+    const platformsToQuery: PlatformType[] = ["codechef", "leetcode", "codeforces", "gfg", "atcoder"];
     try {
-      const [ccRes, lcRes] = await Promise.allSettled([
-        fetch(`/api/codechef?query=${encodeURIComponent(trimmed)}`).then(async (r) => (r.ok ? r.json() : null)),
-        fetch(`/api/leetcode?query=${encodeURIComponent(trimmed)}`).then(async (r) => (r.ok ? r.json() : null)),
-      ]);
+      const results = await Promise.allSettled(
+        platformsToQuery.map((p) => fetchSinglePlatform(p, trimmed))
+      );
 
-      const ccData: ApiResponse | null = ccRes.status === "fulfilled" ? ccRes.value : null;
-      const lcData: ApiResponse | null = lcRes.status === "fulfilled" ? lcRes.value : null;
+      const successfulMatches: ApiResponse[] = [];
+      results.forEach((r) => {
+        if (r.status === "fulfilled" && r.value) {
+          successfulMatches.push(r.value);
+          handleSaveSuccessfulProfile(r.value.profile, r.value.stats, r.value.platform);
+        }
+      });
 
-      if (ccData && lcData) {
-        // Exists on BOTH platforms! Set multiMatch
-        setMultiMatch({
-          username: trimmed,
-          codechef: ccData,
-          leetcode: lcData,
-        });
-        // Default to comparison or LeetCode if LC has more, else CodeChef
-        setData(ccData);
-        setActiveView("compare");
-        handleSaveSuccessfulProfile(ccData.profile, ccData.stats, "codechef");
-        handleSaveSuccessfulProfile(lcData.profile, lcData.stats, "leetcode");
-      } else if (ccData && !lcData) {
-        // Exists ONLY on CodeChef
-        setData(ccData);
-        setActiveView("codechef");
-        handleSaveSuccessfulProfile(ccData.profile, ccData.stats, "codechef");
-      } else if (!ccData && lcData) {
-        // Exists ONLY on LeetCode
-        setData(lcData);
-        setActiveView("leetcode");
-        handleSaveSuccessfulProfile(lcData.profile, lcData.stats, "leetcode");
+      if (successfulMatches.length === 0) {
+        setError(`No coder profile found for '@${trimmed}' across active platforms.`);
+      } else if (successfulMatches.length === 1) {
+        setData(successfulMatches[0]);
+        setActiveView(successfulMatches[0].platform);
+        setMultiMatches(successfulMatches);
       } else {
-        // Exists on NEITHER
-        setData(null);
-        setError(`User '${trimmed}' was not found on CodeChef or LeetCode.`);
+        // Found on multiple platforms!
+        setMultiMatches(successfulMatches);
+        setActiveView("compare");
+        setData(successfulMatches[0]);
       }
     } catch (err: any) {
-      setError(err.message || "An error occurred during lookup.");
-      setData(null);
+      setError(err.message || "Failed to search profiles.");
     } finally {
       setLoading(false);
     }
@@ -281,22 +363,19 @@ export default function Home() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    fetchAutoDetect(inputVal);
+    handleSearch(inputVal);
   };
 
   const handleCopySummary = () => {
     if (!data) return;
-    const currentSaved = savedProfiles.find(
-      (p) => p.username.toLowerCase() === data.profile.username.toLowerCase() && p.platform === data.platform
-    );
-    const displayName = currentSaved?.customName || data.profile.name;
+    const summary = `${data.profile.name} (@${data.profile.username}) on ${PLATFORM_CONFIG[data.platform].name}
+Rating: ${data.profile.currentRating} (${data.profile.stars})
+Problems Solved: ${data.profile.problemsSolved}
+Total Contests: ${data.stats.totalContests}
+Contest Streak: ${data.stats.currentContestStreak} contests
+Profile: ${data.profile.profileUrl}`;
 
-    const text = `${data.platform === "leetcode" ? "LeetCode" : "CodeChef"} Stats for ${displayName} (@${data.profile.username}):\n` +
-      `Problems Solved: ${data.profile.problemsSolved}\n` +
-      `Contests: ${data.stats.totalContests}\n` +
-      `Current Streak: ${data.stats.currentContestStreak}\n` +
-      `Rating: ${data.profile.currentRating} (${data.profile.stars}) | Peak: ${data.profile.maxRating}`;
-    navigator.clipboard.writeText(text);
+    navigator.clipboard.writeText(summary);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -320,28 +399,12 @@ export default function Home() {
     setRenameValue("");
   };
 
-  const handleDeleteSaved = (username: string, platform: "codechef" | "leetcode", e: React.MouseEvent) => {
+  const handleDeleteSaved = (username: string, platform: PlatformType, e: React.MouseEvent) => {
     e.stopPropagation();
     const updated = savedProfiles.filter(
       (p) => !(p.username.toLowerCase() === username.toLowerCase() && p.platform === platform)
     );
     updateSavedList(updated);
-  };
-
-  const getRatingBadgeColor = (rating: number, platform: string = "codechef") => {
-    if (platform === "leetcode") {
-      if (rating >= 2200) return "text-amber-400 bg-amber-950/40 border-amber-500/30"; // Guardian
-      if (rating >= 1850) return "text-purple-400 bg-purple-950/40 border-purple-500/30"; // Knight
-      return "text-blue-400 bg-blue-950/40 border-blue-500/30";
-    }
-    // CodeChef
-    if (rating >= 2500) return "text-red-400 bg-red-950/40 border-red-500/30";
-    if (rating >= 2200) return "text-orange-400 bg-orange-950/40 border-orange-500/30";
-    if (rating >= 2000) return "text-yellow-400 bg-yellow-950/40 border-yellow-500/30";
-    if (rating >= 1800) return "text-purple-400 bg-purple-950/40 border-purple-500/30";
-    if (rating >= 1600) return "text-blue-400 bg-blue-950/40 border-blue-500/30";
-    if (rating >= 1400) return "text-green-400 bg-green-950/40 border-green-500/30";
-    return "text-zinc-300 bg-zinc-800/60 border-zinc-700/50";
   };
 
   const currentSavedProfile = data
@@ -351,7 +414,7 @@ export default function Home() {
     : null;
 
   return (
-    <main className="min-h-screen px-3 sm:px-6 py-8 sm:py-12 max-w-4xl mx-auto overflow-x-hidden">
+    <main className="min-h-screen px-3 sm:px-6 py-8 sm:py-12 max-w-4xl mx-auto overflow-x-hidden text-zinc-100">
       {/* Header */}
       <div className="text-center mb-6 sm:mb-8">
         <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-white flex items-center justify-center gap-2">
@@ -359,8 +422,29 @@ export default function Home() {
           <span className="text-amber-400">Streak Tracker</span>
         </h1>
         <p className="text-zinc-400 text-xs sm:text-sm mt-1">
-          CodeChef &amp; LeetCode contest streaks, problems solved, and stats
+          Unified tracking &amp; contest intelligence across CodeChef, LeetCode, Codeforces, GFG, &amp; more
         </p>
+      </div>
+
+      {/* Platform Filter Pills */}
+      <div className="max-w-xl mx-auto mb-3 flex items-center justify-center gap-1.5 flex-wrap">
+        {PLATFORMS_FILTER.map((tab) => {
+          const isSelected = selectedFilter === tab.id;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setSelectedFilter(tab.id)}
+              className={`px-3 py-1 rounded-full text-xs font-medium transition-all ${
+                isSelected
+                  ? "bg-amber-500 text-zinc-950 font-semibold shadow-sm"
+                  : "bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-white border border-zinc-800"
+              }`}
+            >
+              {tab.label}
+            </button>
+          );
+        })}
       </div>
 
       {/* Search Input */}
@@ -374,7 +458,11 @@ export default function Home() {
               type="text"
               value={inputVal}
               onChange={(e) => setInputVal(e.target.value)}
-              placeholder="Enter username or CodeChef / LeetCode URL..."
+              placeholder={
+                selectedFilter === "all"
+                  ? "Enter username or profile URL from any platform..."
+                  : `Enter ${PLATFORMS_FILTER.find((t) => t.id === selectedFilter)?.label} username or URL...`
+              }
               className="w-full pl-10 pr-4 sm:pr-28 py-3 rounded-xl bg-zinc-900 border border-zinc-800 text-white placeholder-zinc-500 focus:outline-none focus:border-amber-500 text-sm transition-colors"
             />
           </div>
@@ -404,12 +492,14 @@ export default function Home() {
               const isSelected =
                 data?.profile?.username.toLowerCase() === p.username.toLowerCase() &&
                 data?.platform === p.platform;
+              const cfg = PLATFORM_CONFIG[p.platform] || PLATFORM_CONFIG.codechef;
               return (
                 <div
                   key={`${p.platform}_${p.username}`}
                   onClick={() => {
                     setInputVal(p.username);
-                    fetchDirectPlatform(p.platform, p.username);
+                    setSelectedFilter(p.platform);
+                    handleSearch(p.username, p.platform);
                   }}
                   className={`group shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border transition-all cursor-pointer ${
                     isSelected
@@ -417,14 +507,8 @@ export default function Home() {
                       : "bg-zinc-900 hover:bg-zinc-800 border-zinc-800 text-zinc-300"
                   }`}
                 >
-                  <span
-                    className={`text-[10px] font-bold px-1 rounded ${
-                      p.platform === "leetcode"
-                        ? "bg-amber-500/20 text-amber-400"
-                        : "bg-orange-500/20 text-orange-400"
-                    }`}
-                  >
-                    {p.platform === "leetcode" ? "LC" : "CC"}
+                  <span className={`text-[10px] font-bold px-1 rounded ${cfg.accentBg} ${cfg.accentText}`}>
+                    {cfg.shortLabel}
                   </span>
                   <span className="font-medium text-xs text-white">{p.customName}</span>
                   {p.customName.toLowerCase() !== p.username.toLowerCase() && (
@@ -465,18 +549,16 @@ export default function Home() {
       </div>
 
       {/* Multi-Match Platform View Switcher */}
-      {multiMatch && (
+      {multiMatches.length > 1 && (
         <div className="max-w-xl mx-auto my-4 p-3 rounded-xl bg-zinc-900 border border-zinc-800 flex flex-col sm:flex-row items-center justify-between gap-3">
           <div className="text-xs text-zinc-400 text-center sm:text-left">
-            <span>Found </span>
-            <strong className="text-white">@{multiMatch.username}</strong>
-            <span> on both platforms:</span>
+            <span>Found on </span>
+            <strong className="text-white">{multiMatches.length} platforms</strong>
+            <span>:</span>
           </div>
-          <div className="flex items-center gap-1.5 bg-zinc-950 p-1 rounded-lg border border-zinc-800">
+          <div className="flex items-center gap-1.5 bg-zinc-950 p-1 rounded-lg border border-zinc-800 flex-wrap justify-center">
             <button
-              onClick={() => {
-                setActiveView("compare");
-              }}
+              onClick={() => setActiveView("compare")}
               className={`px-3 py-1 rounded-md text-xs font-semibold transition-all flex items-center gap-1 ${
                 activeView === "compare"
                   ? "bg-amber-500 text-zinc-950 font-bold shadow-sm"
@@ -484,34 +566,32 @@ export default function Home() {
               }`}
             >
               <BarChart3 className="w-3.5 h-3.5" />
-              <span>Compare</span>
+              <span>Compare All</span>
             </button>
-            <button
-              onClick={() => {
-                setActiveView("codechef");
-                setData(multiMatch.codechef || null);
-              }}
-              className={`px-3 py-1 rounded-md text-xs font-semibold transition-all flex items-center gap-1 ${
-                activeView === "codechef"
-                  ? "bg-amber-500 text-zinc-950 font-bold shadow-sm"
-                  : "text-zinc-400 hover:text-white"
-              }`}
-            >
-              <span>CodeChef</span>
-            </button>
-            <button
-              onClick={() => {
-                setActiveView("leetcode");
-                setData(multiMatch.leetcode || null);
-              }}
-              className={`px-3 py-1 rounded-md text-xs font-semibold transition-all flex items-center gap-1 ${
-                activeView === "leetcode"
-                  ? "bg-amber-500 text-zinc-950 font-bold shadow-sm"
-                  : "text-zinc-400 hover:text-white"
-              }`}
-            >
-              <span>LeetCode</span>
-            </button>
+            {multiMatches.map((m) => {
+              const cfg = PLATFORM_CONFIG[m.platform];
+              const isSelected = activeView === m.platform;
+              return (
+                <button
+                  key={m.platform}
+                  onClick={() => {
+                    setActiveView(m.platform);
+                    setData(m);
+                  }}
+                  className={`px-3 py-1 rounded-md text-xs font-semibold transition-all flex items-center gap-1.5 ${
+                    isSelected
+                      ? "bg-zinc-800 text-white border border-zinc-700 shadow-sm"
+                      : "text-zinc-400 hover:text-white"
+                  }`}
+                >
+                  <span
+                    className="w-2 h-2 rounded-full"
+                    style={{ backgroundColor: cfg.color }}
+                  ></span>
+                  <span>{cfg.name}</span>
+                </button>
+              );
+            })}
           </div>
         </div>
       )}
@@ -523,7 +603,7 @@ export default function Home() {
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Tag className="w-4 h-4 text-amber-400" />
-                <h3 className="text-sm font-semibold text-white">Custom Name</h3>
+                <h3 className="text-sm font-semibold text-white">Custom Nickname</h3>
               </div>
               <button
                 onClick={() => setEditingProfile(null)}
@@ -533,7 +613,7 @@ export default function Home() {
               </button>
             </div>
             <p className="text-xs text-zinc-400">
-              Set a friendly nickname for <strong className="text-amber-400">@{editingProfile.username}</strong> ({editingProfile.platform === "leetcode" ? "LeetCode" : "CodeChef"}):
+              Set a friendly nickname for <strong className="text-amber-400">@{editingProfile.username}</strong> ({PLATFORM_CONFIG[editingProfile.platform]?.name}):
             </p>
             <form onSubmit={handleSaveRename} className="space-y-3">
               <input
@@ -585,10 +665,10 @@ export default function Home() {
         </div>
       )}
 
-      {/* COMPARISON VIEW: CODECHEF VS LEETCODE GRAPH & BARS */}
-      {!loading && multiMatch && activeView === "compare" && multiMatch.codechef && multiMatch.leetcode && (
-        <div className="space-y-5 mt-6">
-          {/* Comparison Card Header */}
+      {/* MULTI-PLATFORM COMPARISON VIEW */}
+      {!loading && multiMatches.length > 1 && activeView === "compare" && (
+        <div className="space-y-6 mt-6">
+          {/* Header Card */}
           <div className="rounded-2xl bg-zinc-900 border border-zinc-800 p-5 shadow-lg">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-zinc-800">
               <div>
@@ -597,45 +677,98 @@ export default function Home() {
                   <span>Platform Comparison</span>
                 </h2>
                 <p className="text-xs text-zinc-400 mt-0.5">
-                  Side-by-side stats for <strong className="text-white">@{multiMatch.username}</strong>
+                  Cross-platform analysis across {multiMatches.length} coding profiles
                 </p>
               </div>
-              <div className="flex items-center gap-3 text-xs">
-                <span className="flex items-center gap-1.5 font-medium text-orange-400">
-                  <span className="w-2.5 h-2.5 rounded-full bg-orange-500"></span>
-                  CodeChef
-                </span>
-                <span className="flex items-center gap-1.5 font-medium text-amber-400">
-                  <span className="w-2.5 h-2.5 rounded-full bg-amber-400"></span>
-                  LeetCode
-                </span>
+              <div className="flex items-center gap-2.5 flex-wrap text-xs">
+                {multiMatches.map((m) => {
+                  const cfg = PLATFORM_CONFIG[m.platform];
+                  return (
+                    <span key={m.platform} className="flex items-center gap-1.5 font-medium" style={{ color: cfg.color }}>
+                      <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: cfg.color }}></span>
+                      {cfg.name}
+                    </span>
+                  );
+                })}
               </div>
             </div>
 
-            {/* Comparison Metrics Bars */}
-            <div className="space-y-5 pt-4">
+            {/* Comparison Cards Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5 pt-4">
+              {multiMatches.map((m) => {
+                const cfg = PLATFORM_CONFIG[m.platform];
+                return (
+                  <div
+                    key={m.platform}
+                    onClick={() => {
+                      setData(m);
+                      setActiveView(m.platform);
+                    }}
+                    className="p-4 rounded-xl bg-zinc-950/60 border border-zinc-800/80 hover:border-zinc-700 transition-all cursor-pointer group"
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${cfg.accentBg} ${cfg.accentText} ${cfg.border}`}>
+                        {cfg.name}
+                      </span>
+                      <ExternalLink className="w-3.5 h-3.5 text-zinc-500 group-hover:text-amber-400 transition-colors" />
+                    </div>
+                    <h3 className="text-sm font-bold text-white truncate">{m.profile.name}</h3>
+                    <p className="text-xs text-zinc-500 mb-3">@{m.profile.username}</p>
+
+                    <div className="space-y-1.5 text-xs">
+                      <div className="flex items-center justify-between">
+                        <span className="text-zinc-500">Rating / Score</span>
+                        <span className="font-bold text-white">{m.profile.currentRating}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-zinc-500">Problems Solved</span>
+                        <span className="font-semibold text-zinc-300">{m.profile.problemsSolved}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-zinc-500">Contests Attended</span>
+                        <span className="font-semibold text-zinc-300">{m.stats.totalContests}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-zinc-500">Contest Streak</span>
+                        <span className="font-bold text-amber-400">🔥 {m.stats.currentContestStreak}</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Comparison Visual Bars */}
+            <div className="space-y-5 pt-6 border-t border-zinc-800 mt-6">
               {/* Metric 1: Problems Solved */}
               <div>
                 <div className="flex items-center justify-between text-xs mb-1.5">
                   <span className="text-zinc-400 font-medium">Problems Solved</span>
-                  <div className="flex items-center gap-4 text-xs font-bold">
-                    <span className="text-orange-400">CC: {multiMatch.codechef.profile.problemsSolved}</span>
-                    <span className="text-amber-400">LC: {multiMatch.leetcode.profile.problemsSolved}</span>
+                  <div className="flex items-center gap-3 text-xs font-bold flex-wrap">
+                    {multiMatches.map((m) => (
+                      <span key={m.platform} style={{ color: PLATFORM_CONFIG[m.platform].color }}>
+                        {PLATFORM_CONFIG[m.platform].shortLabel}: {m.profile.problemsSolved}
+                      </span>
+                    ))}
                   </div>
                 </div>
                 <div className="w-full h-3 rounded-full bg-zinc-800 overflow-hidden flex">
                   {(() => {
-                    const cc = multiMatch.codechef.profile.problemsSolved;
-                    const lc = multiMatch.leetcode.profile.problemsSolved;
-                    const total = Math.max(cc + lc, 1);
-                    const ccPct = Math.round((cc / total) * 100);
-                    const lcPct = 100 - ccPct;
-                    return (
-                      <>
-                        <div style={{ width: `${ccPct}%` }} className="bg-orange-500 h-full transition-all"></div>
-                        <div style={{ width: `${lcPct}%` }} className="bg-amber-400 h-full transition-all"></div>
-                      </>
-                    );
+                    const totalSolved = multiMatches.reduce((acc, m) => acc + m.profile.problemsSolved, 0) || 1;
+                    return multiMatches.map((m) => {
+                      const pct = Math.round((m.profile.problemsSolved / totalSolved) * 100);
+                      return (
+                        <div
+                          key={m.platform}
+                          style={{
+                            width: `${pct}%`,
+                            backgroundColor: PLATFORM_CONFIG[m.platform].color,
+                          }}
+                          className="h-full transition-all"
+                          title={`${PLATFORM_CONFIG[m.platform].name}: ${m.profile.problemsSolved}`}
+                        ></div>
+                      );
+                    });
                   })()}
                 </div>
               </div>
@@ -643,25 +776,32 @@ export default function Home() {
               {/* Metric 2: Contests Participated */}
               <div>
                 <div className="flex items-center justify-between text-xs mb-1.5">
-                  <span className="text-zinc-400 font-medium">Contests Given</span>
-                  <div className="flex items-center gap-4 text-xs font-bold">
-                    <span className="text-orange-400">CC: {multiMatch.codechef.stats.totalContests}</span>
-                    <span className="text-amber-400">LC: {multiMatch.leetcode.stats.totalContests}</span>
+                  <span className="text-zinc-400 font-medium">Contests Attended</span>
+                  <div className="flex items-center gap-3 text-xs font-bold flex-wrap">
+                    {multiMatches.map((m) => (
+                      <span key={m.platform} style={{ color: PLATFORM_CONFIG[m.platform].color }}>
+                        {PLATFORM_CONFIG[m.platform].shortLabel}: {m.stats.totalContests}
+                      </span>
+                    ))}
                   </div>
                 </div>
                 <div className="w-full h-3 rounded-full bg-zinc-800 overflow-hidden flex">
                   {(() => {
-                    const cc = multiMatch.codechef.stats.totalContests;
-                    const lc = multiMatch.leetcode.stats.totalContests;
-                    const total = Math.max(cc + lc, 1);
-                    const ccPct = Math.round((cc / total) * 100);
-                    const lcPct = 100 - ccPct;
-                    return (
-                      <>
-                        <div style={{ width: `${ccPct}%` }} className="bg-orange-500 h-full transition-all"></div>
-                        <div style={{ width: `${lcPct}%` }} className="bg-amber-400 h-full transition-all"></div>
-                      </>
-                    );
+                    const totalContests = multiMatches.reduce((acc, m) => acc + m.stats.totalContests, 0) || 1;
+                    return multiMatches.map((m) => {
+                      const pct = Math.round((m.stats.totalContests / totalContests) * 100);
+                      return (
+                        <div
+                          key={m.platform}
+                          style={{
+                            width: `${pct}%`,
+                            backgroundColor: PLATFORM_CONFIG[m.platform].color,
+                          }}
+                          className="h-full transition-all"
+                          title={`${PLATFORM_CONFIG[m.platform].name}: ${m.stats.totalContests}`}
+                        ></div>
+                      );
+                    });
                   })()}
                 </div>
               </div>
@@ -669,51 +809,32 @@ export default function Home() {
               {/* Metric 3: Current Rating */}
               <div>
                 <div className="flex items-center justify-between text-xs mb-1.5">
-                  <span className="text-zinc-400 font-medium">Contest Rating</span>
-                  <div className="flex items-center gap-4 text-xs font-bold">
-                    <span className="text-orange-400">CC: {multiMatch.codechef.profile.currentRating}</span>
-                    <span className="text-amber-400">LC: {multiMatch.leetcode.profile.currentRating}</span>
+                  <span className="text-zinc-400 font-medium">Rating / Score</span>
+                  <div className="flex items-center gap-3 text-xs font-bold flex-wrap">
+                    {multiMatches.map((m) => (
+                      <span key={m.platform} style={{ color: PLATFORM_CONFIG[m.platform].color }}>
+                        {PLATFORM_CONFIG[m.platform].shortLabel}: {m.profile.currentRating}
+                      </span>
+                    ))}
                   </div>
                 </div>
                 <div className="w-full h-3 rounded-full bg-zinc-800 overflow-hidden flex">
                   {(() => {
-                    const cc = multiMatch.codechef.profile.currentRating;
-                    const lc = multiMatch.leetcode.profile.currentRating;
-                    const total = Math.max(cc + lc, 1);
-                    const ccPct = Math.round((cc / total) * 100);
-                    const lcPct = 100 - ccPct;
-                    return (
-                      <>
-                        <div style={{ width: `${ccPct}%` }} className="bg-orange-500 h-full transition-all"></div>
-                        <div style={{ width: `${lcPct}%` }} className="bg-amber-400 h-full transition-all"></div>
-                      </>
-                    );
-                  })()}
-                </div>
-              </div>
-
-              {/* Metric 4: Max Streak */}
-              <div>
-                <div className="flex items-center justify-between text-xs mb-1.5">
-                  <span className="text-zinc-400 font-medium">Max Contest Streak</span>
-                  <div className="flex items-center gap-4 text-xs font-bold">
-                    <span className="text-orange-400">CC: {multiMatch.codechef.stats.maxContestStreak} contests</span>
-                    <span className="text-amber-400">LC: {multiMatch.leetcode.stats.maxContestStreak} contests</span>
-                  </div>
-                </div>
-                <div className="w-full h-3 rounded-full bg-zinc-800 overflow-hidden flex">
-                  {(() => {
-                    const cc = multiMatch.codechef.stats.maxContestStreak;
-                    const lc = multiMatch.leetcode.stats.maxContestStreak;
-                    const total = Math.max(cc + lc, 1);
-                    const ccPct = Math.round((cc / total) * 100);
-                    const lcPct = 100 - ccPct;
-                    return (
-                      <>
-                        <div style={{ width: `${ccPct}%` }} className="bg-orange-500 h-full transition-all"></div>
-                        <div style={{ width: `${lcPct}%` }} className="bg-amber-400 h-full transition-all"></div>
-                      </>
-                    );
+                    const totalRating = multiMatches.reduce((acc, m) => acc + m.profile.currentRating, 0) || 1;
+                    return multiMatches.map((m) => {
+                      const pct = Math.round((m.profile.currentRating / totalRating) * 100);
+                      return (
+                        <div
+                          key={m.platform}
+                          style={{
+                            width: `${pct}%`,
+                            backgroundColor: PLATFORM_CONFIG[m.platform].color,
+                          }}
+                          className="h-full transition-all"
+                          title={`${PLATFORM_CONFIG[m.platform].name}: ${m.profile.currentRating}`}
+                        ></div>
+                      );
+                    });
                   })()}
                 </div>
               </div>
@@ -728,16 +849,22 @@ export default function Home() {
           {/* User Profile Card */}
           <div className="rounded-2xl bg-zinc-900 border border-zinc-800 p-4 sm:p-6 shadow-lg">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
-                <div
-                  className={`w-12 h-12 rounded-xl flex items-center justify-center font-bold text-lg shrink-0 border ${
-                    data.platform === "leetcode"
-                      ? "bg-amber-500/20 text-amber-400 border-amber-500/30"
-                      : "bg-orange-500/20 text-orange-400 border-orange-500/30"
-                  }`}
-                >
-                  {(currentSavedProfile?.customName || data.profile.name).charAt(0).toUpperCase()}
-                </div>
+              <div className="flex items-center gap-3.5">
+                {data.profile.avatar ? (
+                  <img
+                    src={data.profile.avatar}
+                    alt={data.profile.name}
+                    className="w-12 h-12 rounded-xl object-cover shrink-0 border border-zinc-700"
+                  />
+                ) : (
+                  <div
+                    className={`w-12 h-12 rounded-xl flex items-center justify-center font-bold text-lg shrink-0 border ${
+                      PLATFORM_CONFIG[data.platform]?.accentBg
+                    } ${PLATFORM_CONFIG[data.platform]?.accentText} ${PLATFORM_CONFIG[data.platform]?.border}`}
+                  >
+                    {(currentSavedProfile?.customName || data.profile.name).charAt(0).toUpperCase()}
+                  </div>
+                )}
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <h2 className="text-base sm:text-lg font-bold text-white truncate">
@@ -745,12 +872,10 @@ export default function Home() {
                     </h2>
                     <span
                       className={`text-[10px] uppercase font-bold px-1.5 py-0.5 rounded border ${
-                        data.platform === "leetcode"
-                          ? "bg-amber-500/10 text-amber-400 border-amber-500/30"
-                          : "bg-orange-500/10 text-orange-400 border-orange-500/30"
-                      }`}
+                        PLATFORM_CONFIG[data.platform]?.accentBg
+                      } ${PLATFORM_CONFIG[data.platform]?.accentText} ${PLATFORM_CONFIG[data.platform]?.border}`}
                     >
-                      {data.platform === "leetcode" ? "LeetCode" : "CodeChef"}
+                      {PLATFORM_CONFIG[data.platform]?.name}
                     </span>
                     <button
                       onClick={() => {
@@ -784,10 +909,11 @@ export default function Home() {
                         {data.profile.country}
                       </span>
                     )}
+                    {data.profile.institution && (
+                      <span className="text-zinc-500">• {data.profile.institution}</span>
+                    )}
                     {data.profile.problemsSolved > 0 && (
-                      <span className="text-zinc-500">
-                        • {data.profile.problemsSolved} solved
-                      </span>
+                      <span className="text-zinc-500">• {data.profile.problemsSolved} solved</span>
                     )}
                   </div>
                 </div>
@@ -815,107 +941,147 @@ export default function Home() {
                   href={data.profile.profileUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 border border-zinc-700/60 text-zinc-300 text-xs font-medium transition-all flex items-center justify-center gap-1.5"
+                  className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-zinc-950 text-xs font-semibold transition-all flex items-center justify-center gap-1.5 active:scale-95"
                 >
-                  <span>{data.platform === "leetcode" ? "LeetCode" : "CodeChef"}</span>
-                  <ExternalLink className="w-3 h-3 text-zinc-500" />
+                  <span>Profile</span>
+                  <ExternalLink className="w-3 h-3" />
                 </a>
               </div>
             </div>
           </div>
 
-          {/* LEETCODE PROBLEM SOLVING BREAKDOWN (EASY, MEDIUM, HARD) */}
+          {/* Key Stat Cards Grid */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {/* 1. Rating */}
+            <div className="p-4 rounded-xl bg-zinc-900 border border-zinc-800 space-y-1">
+              <span className="text-[11px] text-zinc-500 font-medium">Rating / Score</span>
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-xl sm:text-2xl font-bold text-white">
+                  {data.profile.currentRating}
+                </span>
+                {data.profile.maxRating > data.profile.currentRating && (
+                  <span className="text-[10px] text-zinc-500">Peak: {data.profile.maxRating}</span>
+                )}
+              </div>
+              <span className="text-[10px] text-amber-400/90 font-medium truncate block">
+                {data.profile.stars}
+              </span>
+            </div>
+
+            {/* 2. Problems Solved */}
+            <div className="p-4 rounded-xl bg-zinc-900 border border-zinc-800 space-y-1">
+              <span className="text-[11px] text-zinc-500 font-medium">Problems Solved</span>
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-xl sm:text-2xl font-bold text-white">
+                  {data.profile.problemsSolved}
+                </span>
+              </div>
+              <span className="text-[10px] text-zinc-500 truncate block">
+                {data.profile.countryRank || data.profile.userType || "Active Coder"}
+              </span>
+            </div>
+
+            {/* 3. Contest Streak */}
+            <div className="p-4 rounded-xl bg-zinc-900 border border-zinc-800 space-y-1">
+              <span className="text-[11px] text-zinc-500 font-medium">Contest Streak</span>
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-xl sm:text-2xl font-bold text-amber-400 flex items-center gap-1">
+                  <Flame className="w-5 h-5 text-amber-400 fill-amber-400" />
+                  {data.stats.currentContestStreak}
+                </span>
+              </div>
+              <span className="text-[10px] text-zinc-500">
+                Max: {data.stats.maxContestStreak} contests
+              </span>
+            </div>
+
+            {/* 4. Total Contests */}
+            <div className="p-4 rounded-xl bg-zinc-900 border border-zinc-800 space-y-1">
+              <span className="text-[11px] text-zinc-500 font-medium">Contests Given</span>
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-xl sm:text-2xl font-bold text-white">
+                  {data.stats.totalContests}
+                </span>
+              </div>
+              <span className="text-[10px] text-zinc-500">
+                {data.stats.lastContest ? `Last: ${data.stats.lastContest.date}` : "Lifetime"}
+              </span>
+            </div>
+          </div>
+
+          {/* LEETCODE PROBLEM-SOLVING BREAKDOWN CARD */}
           {data.platform === "leetcode" && data.profile.solvedBreakdown && (
-            <div className="rounded-2xl bg-zinc-900 border border-zinc-800 p-4 sm:p-5 shadow-lg">
+            <div className="rounded-2xl bg-zinc-900 border border-zinc-800 p-4 sm:p-6 shadow-lg">
               <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-2">
-                  <CheckCircle className="w-4 h-4 text-amber-400" />
-                  <h3 className="text-sm font-semibold text-white">Problems Solved</h3>
-                </div>
-                <span className="text-xs font-bold text-amber-400">
-                  {data.profile.solvedBreakdown.total} / {data.profile.solvedBreakdown.allTotal}
+                <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+                  <Code2 className="w-4 h-4 text-amber-400" />
+                  <span>LeetCode Problem Solving</span>
+                </h3>
+                <span className="text-xs text-zinc-400 font-medium">
+                  {data.profile.solvedBreakdown.total} / {data.profile.solvedBreakdown.allTotal} Solved
                 </span>
               </div>
 
-              {/* 3 Difficulty Columns */}
-              <div className="grid grid-cols-3 gap-2.5 sm:gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 {/* Easy */}
-                <div className="rounded-xl bg-zinc-950 p-3 border border-zinc-800/80">
+                <div className="p-3 rounded-xl bg-zinc-950 border border-zinc-800">
                   <div className="flex items-center justify-between text-xs mb-1">
-                    <span className="text-emerald-400 font-semibold text-[11px]">Easy</span>
-                    <span className="text-[10px] text-zinc-500 font-mono">
-                      {Math.round((data.profile.solvedBreakdown.easy / data.profile.solvedBreakdown.easyTotal) * 100)}%
+                    <span className="text-emerald-400 font-semibold">Easy</span>
+                    <span className="text-zinc-400">
+                      {data.profile.solvedBreakdown.easy} / {data.profile.solvedBreakdown.easyTotal}
                     </span>
                   </div>
-                  <div className="text-lg sm:text-xl font-bold text-white">
-                    {data.profile.solvedBreakdown.easy}
-                  </div>
-                  <div className="text-[10px] text-zinc-500">
-                    of {data.profile.solvedBreakdown.easyTotal}
-                  </div>
-                  <div className="w-full bg-zinc-800 h-1.5 rounded-full mt-2 overflow-hidden">
+                  <div className="w-full h-2 rounded-full bg-zinc-800 overflow-hidden">
                     <div
                       style={{
                         width: `${Math.min(
-                          (data.profile.solvedBreakdown.easy / data.profile.solvedBreakdown.easyTotal) * 100,
-                          100
+                          100,
+                          Math.round((data.profile.solvedBreakdown.easy / (data.profile.solvedBreakdown.easyTotal || 1)) * 100)
                         )}%`,
                       }}
-                      className="bg-emerald-500 h-full rounded-full"
+                      className="bg-emerald-500 h-full rounded-full transition-all"
                     ></div>
                   </div>
                 </div>
 
                 {/* Medium */}
-                <div className="rounded-xl bg-zinc-950 p-3 border border-zinc-800/80">
+                <div className="p-3 rounded-xl bg-zinc-950 border border-zinc-800">
                   <div className="flex items-center justify-between text-xs mb-1">
-                    <span className="text-amber-400 font-semibold text-[11px]">Medium</span>
-                    <span className="text-[10px] text-zinc-500 font-mono">
-                      {Math.round((data.profile.solvedBreakdown.medium / data.profile.solvedBreakdown.mediumTotal) * 100)}%
+                    <span className="text-amber-400 font-semibold">Medium</span>
+                    <span className="text-zinc-400">
+                      {data.profile.solvedBreakdown.medium} / {data.profile.solvedBreakdown.mediumTotal}
                     </span>
                   </div>
-                  <div className="text-lg sm:text-xl font-bold text-white">
-                    {data.profile.solvedBreakdown.medium}
-                  </div>
-                  <div className="text-[10px] text-zinc-500">
-                    of {data.profile.solvedBreakdown.mediumTotal}
-                  </div>
-                  <div className="w-full bg-zinc-800 h-1.5 rounded-full mt-2 overflow-hidden">
+                  <div className="w-full h-2 rounded-full bg-zinc-800 overflow-hidden">
                     <div
                       style={{
                         width: `${Math.min(
-                          (data.profile.solvedBreakdown.medium / data.profile.solvedBreakdown.mediumTotal) * 100,
-                          100
+                          100,
+                          Math.round((data.profile.solvedBreakdown.medium / (data.profile.solvedBreakdown.mediumTotal || 1)) * 100)
                         )}%`,
                       }}
-                      className="bg-amber-500 h-full rounded-full"
+                      className="bg-amber-400 h-full rounded-full transition-all"
                     ></div>
                   </div>
                 </div>
 
                 {/* Hard */}
-                <div className="rounded-xl bg-zinc-950 p-3 border border-zinc-800/80">
+                <div className="p-3 rounded-xl bg-zinc-950 border border-zinc-800">
                   <div className="flex items-center justify-between text-xs mb-1">
-                    <span className="text-rose-400 font-semibold text-[11px]">Hard</span>
-                    <span className="text-[10px] text-zinc-500 font-mono">
-                      {Math.round((data.profile.solvedBreakdown.hard / data.profile.solvedBreakdown.hardTotal) * 100)}%
+                    <span className="text-red-400 font-semibold">Hard</span>
+                    <span className="text-zinc-400">
+                      {data.profile.solvedBreakdown.hard} / {data.profile.solvedBreakdown.hardTotal}
                     </span>
                   </div>
-                  <div className="text-lg sm:text-xl font-bold text-white">
-                    {data.profile.solvedBreakdown.hard}
-                  </div>
-                  <div className="text-[10px] text-zinc-500">
-                    of {data.profile.solvedBreakdown.hardTotal}
-                  </div>
-                  <div className="w-full bg-zinc-800 h-1.5 rounded-full mt-2 overflow-hidden">
+                  <div className="w-full h-2 rounded-full bg-zinc-800 overflow-hidden">
                     <div
                       style={{
                         width: `${Math.min(
-                          (data.profile.solvedBreakdown.hard / data.profile.solvedBreakdown.hardTotal) * 100,
-                          100
+                          100,
+                          Math.round((data.profile.solvedBreakdown.hard / (data.profile.solvedBreakdown.hardTotal || 1)) * 100)
                         )}%`,
                       }}
-                      className="bg-rose-500 h-full rounded-full"
+                      className="bg-red-500 h-full rounded-full transition-all"
                     ></div>
                   </div>
                 </div>
@@ -923,130 +1089,67 @@ export default function Home() {
             </div>
           )}
 
-          {/* 4 Key Stat Cards */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3">
-            {/* Total Contests */}
-            <div className="rounded-xl bg-zinc-900 border border-zinc-800 p-3.5">
-              <div className="flex items-center justify-between text-zinc-500 mb-1">
-                <span className="text-[10px] uppercase font-medium tracking-wider">Contests</span>
-                <Trophy className="w-3.5 h-3.5 text-amber-400" />
-              </div>
-              <div className="text-2xl font-bold text-white">
-                {data.stats.totalContests}
-              </div>
-            </div>
-
-            {/* Streak */}
-            <div className="rounded-xl bg-zinc-900 border border-amber-500/20 p-3.5">
-              <div className="flex items-center justify-between text-amber-400/80 mb-1">
-                <span className="text-[10px] uppercase font-medium tracking-wider">Streak</span>
-                <Flame className="w-3.5 h-3.5 text-amber-400" />
-              </div>
-              <div className="flex items-baseline gap-1.5">
-                <span className="text-2xl font-bold text-amber-400">{data.stats.currentContestStreak}</span>
-                <span className="text-[11px] text-zinc-500">contests</span>
-              </div>
-              <div className="text-[10px] text-zinc-500 mt-0.5">
-                Max: {data.stats.maxContestStreak}
-              </div>
-            </div>
-
-            {/* Rating */}
-            <div className="rounded-xl bg-zinc-900 border border-zinc-800 p-3.5">
-              <div className="flex items-center justify-between text-zinc-500 mb-1">
-                <span className="text-[10px] uppercase font-medium tracking-wider">Rating</span>
-                <Award className="w-3.5 h-3.5 text-zinc-400" />
-              </div>
-              <div className="flex items-center gap-1.5">
-                <span className="text-2xl font-bold text-white">{data.profile.currentRating}</span>
-                <span
-                  className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${getRatingBadgeColor(
-                    data.profile.currentRating,
-                    data.platform
-                  )}`}
-                >
-                  {data.profile.stars}
-                </span>
-              </div>
-              <div className="text-[10px] text-zinc-500 mt-0.5">
-                Peak: {data.profile.maxRating}
-              </div>
-            </div>
-
-            {/* Global Rank */}
-            <div className="rounded-xl bg-zinc-900 border border-zinc-800 p-3.5">
-              <div className="flex items-center justify-between text-zinc-500 mb-1">
-                <span className="text-[10px] uppercase font-medium tracking-wider">Rank</span>
-                <Globe className="w-3.5 h-3.5 text-zinc-400" />
-              </div>
-              <div className="text-lg font-bold text-white truncate">
-                {data.profile.globalRank ? `#${data.profile.globalRank}` : "—"}
-              </div>
-              <div className="text-[10px] text-zinc-500 mt-0.5 truncate">
-                {data.profile.countryRank ? `Country: #${data.profile.countryRank}` : `${data.profile.problemsSolved} Solved`}
-              </div>
-            </div>
-          </div>
-
-          {/* Rating Progression Chart (If user participated in contests) */}
-          {data.ratingHistory.length > 0 ? (
+          {/* SVG RATING TRAJECTORY GRAPH (For platforms with rating history) */}
+          {data.ratingHistory.length > 1 && (
             <div className="rounded-2xl bg-zinc-900 border border-zinc-800 p-4 sm:p-6 shadow-lg">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-sm font-semibold text-white flex items-center gap-1.5">
                   <TrendingUp className="w-4 h-4 text-amber-400" />
-                  Rating History
+                  <span>Rating Trajectory</span>
                 </h3>
                 <span className="text-[11px] text-zinc-500">
-                  {data.ratingHistory.length} contests
+                  {data.ratingHistory.length} Rated Contests
                 </span>
               </div>
 
-              {/* Chart */}
-              <div className="w-full overflow-x-auto pb-2 -mx-2 px-2 sm:mx-0 sm:px-0">
-                <div className="min-w-[460px] sm:min-w-[560px] h-36 sm:h-40 relative">
+              <div className="w-full overflow-x-auto pb-2">
+                <div className="min-w-[500px]">
                   {(() => {
-                    const ratings = data.ratingHistory.map((c) => c.rating);
-                    const minR = Math.min(...ratings, 700);
-                    const maxR = Math.max(...ratings, 1000);
-                    const range = Math.max(maxR - minR, 80);
-                    const width = 560;
-                    const height = 120;
+                    const list = data.ratingHistory.slice(-20);
+                    const ratings = list.map((c) => c.rating);
+                    const minR = Math.min(...ratings) - 50;
+                    const maxR = Math.max(...ratings) + 50;
+                    const range = Math.max(maxR - minR, 100);
 
-                    const points = data.ratingHistory.map((c, idx) => {
-                      const x = (idx / Math.max(data.ratingHistory.length - 1, 1)) * (width - 50) + 25;
-                      const y = height - ((c.rating - minR) / range) * (height - 30) - 15;
+                    const width = 640;
+                    const height = 140;
+                    const paddingX = 40;
+                    const paddingY = 20;
+
+                    const points = list.map((c, i) => {
+                      const x = paddingX + (i / Math.max(list.length - 1, 1)) * (width - 2 * paddingX);
+                      const y = height - paddingY - ((c.rating - minR) / range) * (height - 2 * paddingY);
                       return { x, y, c };
                     });
 
-                    const pathString = points
-                      .map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`)
-                      .join(" ");
+                    const polylinePoints = points.map((p) => `${p.x},${p.y}`).join(" ");
 
                     return (
-                      <svg viewBox={`0 0 ${width} ${height + 25}`} className="w-full h-full overflow-visible">
-                        <line x1="15" y1="15" x2={width - 15} y2="15" stroke="#27272a" strokeDasharray="3 3" />
-                        <line x1="15" y1={height / 2} x2={width - 15} y2={height / 2} stroke="#27272a" strokeDasharray="3 3" />
-                        <line x1="15" y1={height - 15} x2={width - 15} y2={height - 15} stroke="#27272a" strokeDasharray="3 3" />
-
-                        <defs>
-                          <linearGradient id="chartGradient" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="0%" stopColor="#f59e0b" stopOpacity="0.25" />
-                            <stop offset="100%" stopColor="#f59e0b" stopOpacity="0.0" />
-                          </linearGradient>
-                        </defs>
-
-                        {points.length > 1 && (
-                          <path
-                            d={`${pathString} L ${points[points.length - 1].x} ${height} L ${points[0].x} ${height} Z`}
-                            fill="url(#chartGradient)"
-                          />
-                        )}
-
-                        <path d={pathString} fill="none" stroke="#f59e0b" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-
-                        {points.map((p, i) => (
-                          <g key={i}>
-                            <circle cx={p.x} cy={p.y} r="4" fill="#18181b" stroke="#f59e0b" strokeWidth="2" />
+                      <svg viewBox={`0 0 ${width} ${height + 25}`} className="w-full h-36">
+                        <line
+                          x1={paddingX}
+                          y1={height - paddingY}
+                          x2={width - paddingX}
+                          y2={height - paddingY}
+                          stroke="#27272a"
+                          strokeDasharray="4 4"
+                        />
+                        <polyline
+                          fill="none"
+                          stroke={PLATFORM_CONFIG[data.platform]?.color || "#fbbf24"}
+                          strokeWidth="2.5"
+                          points={polylinePoints}
+                        />
+                        {points.map((p, idx) => (
+                          <g key={idx} className="group cursor-pointer">
+                            <circle
+                              cx={p.x}
+                              cy={p.y}
+                              r="4"
+                              fill="#09090b"
+                              stroke={PLATFORM_CONFIG[data.platform]?.color || "#fbbf24"}
+                              strokeWidth="2"
+                            />
                             <text
                               x={p.x}
                               y={p.y - 8}
@@ -1074,12 +1177,6 @@ export default function Home() {
                 </div>
               </div>
             </div>
-          ) : (
-            data.platform === "leetcode" && (
-              <div className="rounded-xl bg-zinc-900 border border-zinc-800 p-4 text-center text-xs text-zinc-500">
-                User focuses on problem solving (No contest history yet on LeetCode).
-              </div>
-            )
           )}
 
           {/* Contest Breakdown Table */}
@@ -1088,7 +1185,7 @@ export default function Home() {
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-sm font-semibold text-white flex items-center gap-1.5">
                   <Calendar className="w-4 h-4 text-amber-400" />
-                  Contests
+                  <span>Contest History</span>
                 </h3>
                 <span className="text-[11px] text-zinc-500">
                   {data.contests.length} Total
@@ -1108,12 +1205,14 @@ export default function Home() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-zinc-800/50 text-zinc-300">
-                      {data.contests.map((c, i) => (
+                      {data.contests.slice(0, 30).map((c, i) => (
                         <tr key={c.code + i} className="hover:bg-zinc-800/20 transition-colors">
                           <td className="py-2.5 px-3 font-medium text-white whitespace-nowrap">
                             <div className="flex items-center gap-1.5">
                               <CheckCircle2 className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                              <span>{c.name}</span>
+                              <span className="max-w-[220px] truncate" title={c.name}>
+                                {c.name}
+                              </span>
                             </div>
                           </td>
                           <td className="py-2.5 px-3 text-zinc-500 whitespace-nowrap">{c.date}</td>
@@ -1149,7 +1248,7 @@ export default function Home() {
 
       {/* Footer */}
       <footer className="mt-12 text-center text-[11px] text-zinc-600">
-        Coder Streak Tracker • CodeChef &amp; LeetCode
+        Coder Streak Tracker • CodeChef • LeetCode • Codeforces • GFG • AtCoder
       </footer>
     </main>
   );
